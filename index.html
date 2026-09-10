@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GroWiz Scanner Pro</title>
+<style>
+body{background:#0a0a0a;color:#fff;font-family:system-ui;padding:14px;margin:0}
+button{width:100%;padding:16px;font-size:18px;background:#00ff88;border:0;border-radius:12px;font-weight:800}
+.card{background:#151515;padding:14px;border-radius:10px;margin-top:12px;border-left:6px solid #00ff88}
+.put{border-left-color:#ff4444}
+small{color:#999} b{font-size:16px}
+.hdr{position:sticky;top:0;background:#0a0a0a;padding:10px 0}
+</style>
+</head>
+<body>
+<div class="hdr">
+<h2 style="margin:0">GroWiz Scanner Pro</h2>
+<small>5 MIN | 39 Forex + Commodities + 7 Crypto | <span id="kz"></span></small><br><br>
+<button id="btn" onclick="toggle()">START SCAN</button>
+<p id="status" style="color:#888"></p>
+</div>
+<div id="out"></div>
+
+<script>
+let scanning=false, timer=null;
+
+const FOREX = [
+["EUR/USD","EURUSD=X"],["GBP/USD","GBPUSD=X"],["USD/JPY","JPY=X"],["USD/CHF","CHF=X"],
+["AUD/USD","AUDUSD=X"],["USD/CAD","CAD=X"],["NZD/USD","NZDUSD=X"],
+["EUR/GBP","EURGBP=X"],["EUR/JPY","EURJPY=X"],["GBP/JPY","GBPJPY=X"],
+["AUD/JPY","AUDJPY=X"],["CHF/JPY","CHFJPY=X"],["CAD/JPY","CADJPY=X"],["NZD/JPY","NZDJPY=X"],
+["EUR/AUD","EURAUD=X"],["EUR/CAD","EURCAD=X"],["EUR/CHF","EURCHF=X"],["EUR/NZD","EURNZD=X"],
+["GBP/AUD","GBPAUD=X"],["GBP/CAD","GBPCAD=X"],["GBP/CHF","GBPCHF=X"],["GBP/NZD","GBPNZD=X"],
+["AUD/CAD","AUDCAD=X"],["AUD/CHF","AUDCHF=X"],["AUD/NZD","AUDNZD=X"],
+["CAD/CHF","CADCHF=X"],["NZD/CAD","NZDCAD=X"],["NZD/CHF","NZDCHF=X"],
+["USD/SGD","SGD=X"],["USD/HKD","HKD=X"],["USD/MXN","MXN=X"],["USD/ZAR","ZAR=X"],
+["USD/TRY","TRY=X"],["EUR/TRY","EURTRY=X"],["GBP/TRY","GBPTRY=X"],
+["USD/SEK","SEK=X"],["USD/NOK","NOK=X"],["EUR/SEK","EURSEK=X"],["EUR/NOK","EURNOK=X"]
+];
+const COMMODITIES = [
+["GOLD","GC=F"],["SILVER","SI=F"],["US OIL","CL=F"],["BRENT OIL","BZ=F"],
+["NAT GAS","NG=F"],["COPPER","HG=F"]
+];
+const CRYPTO = [
+["BTC/USD","BTCUSDT"],["ETH/USD","ETHUSDT"],["SOL/USD","SOLUSDT"],
+["BNB/USD","BNBUSDT"],["XRP/USD","XRPUSDT"],["DOGE/USD","DOGEUSDT"],["ADA/USD","ADAUSDT"]
+];
+
+function killzone(){
+  const h=new Date().getUTCHours();
+  if(h>=7&&h<10) return 'London KZ - HIGH';
+  if(h>=12&&h<15) return 'NY KZ - HIGH';
+  if(h>=2&&h<5) return 'Asia - AVOID';
+  return 'Off-hours - MED';
+}
+document.getElementById('kz').innerText=killzone();
+
+function findOB(c){
+  for(let i=c.length-3;i>2;i--){
+    const b=c[i];
+    if(Math.abs(b.close-b.open) > (b.high-b.low)*0.6){
+      if(b.close>b.open && c[i+1].close<c[i+1].open) return {t:'Bullish OB',b:b.low,tt:b.high};
+      if(b.close<b.open && c[i+1].close>c[i+1].open) return {t:'Bearish OB',b:b.low,tt:b.high};
+    }
+  } return null;
+}
+function findFVG(c){
+  for(let i=c.length-2;i>1;i--){
+    if(c[i-1].high < c[i+1].low) return {t:'Bullish FVG',b:c[i-1].high,tt:c[i+1].low};
+    if(c[i-1].low > c[i+1].high) return {t:'Bearish FVG',b:c[i+1].high,tt:c[i-1].low};
+  } return null;
+}
+function findLiq(c){
+  const rec=c.slice(-20);
+  const hi=Math.max(...rec.map(x=>x.high));
+  const lo=Math.min(...rec.map(x=>x.low));
+  const l=c[c.length-1];
+  if(l.high>hi*0.999 && l.close<l.high) return {t:'BEARISH',d:`SRM swept @ ${l.high.toFixed(5)}`};
+  if(l.low<lo*1.001 && l.close>l.low) return {t:'BULLISH',d:`BRM swept @ ${l.low.toFixed(5)}`};
+  return null;
+}
+function isChoppy(c){
+  const atr=c.slice(-14).reduce((a,x)=>a+(x.high-x.low),0)/14;
+  const l=c[c.length-1];
+  return (l.high-l.low) < atr*0.5;
+}
+function score(c){
+  const ob=findOB(c), fvg=findFVG(c), liq=findLiq(c);
+  let s=0, r=[];
+  if(ob){s+=25; r.push(`${ob.t} ${ob.b.toFixed(5)}-${ob.tt.toFixed(5)}`);}
+  if(fvg){s+=20; r.push(`${fvg.t} ${fvg.b.toFixed(5)}-${fvg.tt.toFixed(5)}`);}
+  if(liq){s+=25; r.push(liq.d);}
+  const ms = c[c.length-1].close > c[c.length-10].close? 'Bullish MS' : 'Bearish MS';
+  s+=10; r.push(ms);
+  const bull=(ob?.t.includes('Bullish')?1:0)+(fvg?.t.includes('Bullish')?1:0)+(liq?.t==='BULLISH'?1:0);
+  const bear=(ob?.t.includes('Bearish')?1:0)+(fvg?.t.includes('Bearish')?1:0)+(liq?.t==='BEARISH'?1:0);
+  let dir='NONE';
+  if(s>=50) dir = bull>=bear? 'CALL':'PUT';
+  const l=c[c.length-1];
+  const vol=`${l.close>l.open?'Buyside':'Sellside'}`;
+  return {dir,conf:Math.min(s,95),r,vol,ob,fvg,liq};
+}
+
+async function getYahoo(sym){
+  const url=`https://api.allorigins.win/raw?url=${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=5m&range=1d`)}`;
+  const res=await fetch(url);
+  const j=await res.json();
+  const r=j.chart.result[0];
+  const q=r.indicators.quote[0];
+  let out=[];
+  for(let i=0;i<r.timestamp.length;i++){
+    if(!q.close[i]) continue;
+    out.push({open:q.open[i],high:q.high[i],low:q.low[i],close:q.close[i]});
+  }
+  return out;
+}
+async function getCrypto(sym){
+  const r=await fetch(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=5m&limit=50`);
+  const d=await r.json();
+  return d.map(k=>({open:+k[1],high:+k[2],low:+k[3],close:+k[4]}));
+}
+
+async function scan(){
+  document.getElementById('status').innerText='Scanning 52 markets...';
+  let res=[];
+  for(let [lbl,sym] of [...FOREX,...COMMODITIES]){
+    try{
+      const c=await getYahoo(sym);
+      if(!c||c.length<20||isChoppy(c)) continue;
+      const s=score(c);
+      if(s.dir!=='NONE') res.push({pair:lbl,...s});
+    }catch(e){}
+    await new Promise(r=>setTimeout(r,120));
+  }
+  for(let [lbl,sym] of CRYPTO){
+    try{
+      const c=await getCrypto(sym);
+      if(!c||c.length<20||isChoppy(c)) continue;
+      const s=score(c);
+      if(s.dir!=='NONE') res.push({pair:lbl,...s});
+    }catch(e){}
+  }
+  res.sort((a,b)=>b.conf-a.conf);
+  res=res.slice(0,3);
+  let html='';
+  res.forEach((t,i)=>{
+    html+=`<div class="card ${t.dir==='PUT'?'put':''}">
+    <b>#${i+1} ${t.pair} - ${t.dir} ${t.conf}%</b><br>
+    <small>5 MIN | ${killzone()}</small><br><br>
+    Volume: ${t.vol}<br>
+    Liquidity: ${t.liq?t.liq.d:'No sweep'}<br>
+    ${t.liq? (t.liq.t==='BULLISH'? 'BRM taken' : 'SRM taken') : 'BRM/SRM intact'}<br>
+    Order Block: ${t.ob? t.ob.t+' '+t.ob.b.toFixed(5)+'-'+t.ob.tt.toFixed(5) : 'No OB'}<br>
+    FVG: ${t.fvg? t.fvg.t+' '+t.fvg.b.toFixed(5)+'-'+t.fvg.tt.toFixed(5) : 'No FVG'}<br>
+    <small>${t.r.join(' | ')}</small>
+    </div>`;
+  });
+  if(!res.length) html='<p style="color:#888">No A+ setup. Choppy or off-killzone. Wait.</p>';
+  document.getElementById('out').innerHTML=html;
+  document.getElementById('status').innerText='Last scan: '+new Date().toLocaleTimeString()+' | Scanned 52';
+}
+
+function toggle(){
+  scanning=!scanning;
+  document.getElementById('btn').innerText=scanning?'STOP SCAN':'START SCAN';
+  document.getElementById('btn').style.background=scanning?'#ff4444':'#00ff88';
+  if(scanning){scan(); timer=setInterval(scan,120000);}
+  else clearInterval(timer);
+}
+</script>
+</body>
+</html>
