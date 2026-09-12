@@ -3,22 +3,13 @@
 // Normalizes candles from two different sources into one shape:
 // { time, open, high, low, close, volume, buyVolume, sellVolume, volumeIsEstimated }
 //
-// IMPORTANT HONESTY NOTE:
-// - Crypto (Binance) volume is real exchange volume, split into taker buy/sell.
-// - Forex & commodities have NO centralized volume (it's an OTC market).
-//   "buyVolume"/"sellVolume" for those is an ESTIMATE derived from candle
-//   shape (close position within the high-low range), not real order flow.
-//   volumeIsEstimated=true is set so the UI can label it honestly.
+// Crypto -> Binance public endpoint directly (free, no key, generous limits).
+// Forex/commodities -> our own /api/forex-candles serverless function, which
+// holds the Twelve Data key server-side. Users never see or enter a key.
 
 const BINANCE_INTERVAL_MAP = {
   "5min": "5m",
   "15min": "15m",
-  "1h": "1h",
-};
-
-const TWELVEDATA_INTERVAL_MAP = {
-  "5min": "5min",
-  "15min": "15min",
   "1h": "1h",
 };
 
@@ -48,18 +39,17 @@ export async function fetchCryptoCandles(symbol, timeframe = "5min", limit = 100
   });
 }
 
-export async function fetchTwelveDataCandles(symbol, timeframe = "5min", apiKey, limit = 100) {
-  const interval = TWELVEDATA_INTERVAL_MAP[timeframe] || "5min";
-  const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(
+// Calls OUR backend, not Twelve Data directly. No API key required or
+// accepted from the caller.
+export async function fetchForexCandles(symbol, timeframe = "5min", limit = 100) {
+  const url = `/api/forex-candles?symbol=${encodeURIComponent(
     symbol
-  )}&interval=${interval}&outputsize=${limit}&apikey=${apiKey}`;
+  )}&interval=${timeframe}&outputsize=${limit}`;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Twelve Data fetch failed for ${symbol}: ${res.status}`);
   const json = await res.json();
-  if (json.status === "error") throw new Error(`Twelve Data error for ${symbol}: ${json.message}`);
+  if (!res.ok) throw new Error(json.error || `forex-candles proxy failed for ${symbol}`);
 
   const values = json.values || [];
-  // Twelve Data returns newest-first; flip to oldest-first to match Binance.
   return values
     .slice()
     .reverse()
@@ -69,7 +59,6 @@ export async function fetchTwelveDataCandles(symbol, timeframe = "5min", apiKey,
       const low = parseFloat(v.low);
       const close = parseFloat(v.close);
       const range = Math.max(high - low, 1e-9);
-      // Estimated buy/sell pressure from candle shape, NOT real order flow.
       const buyPressure = (close - low) / range;
       const sellPressure = (high - close) / range;
       return {
@@ -86,10 +75,13 @@ export async function fetchTwelveDataCandles(symbol, timeframe = "5min", apiKey,
     });
 }
 
-// Simple sequential-with-delay fetcher to respect Twelve Data's free-tier
-// rate limit (8 requests/minute on the free plan as of writing — verify
-// your current plan's limit before raising batch size or lowering delayMs).
-export async function fetchBatch(symbols, fetchFn, delayMs = 8000) {
+// Paces requests to the proxy. The proxy caches each symbol for 60s
+// (see api/forex-candles.js), so concurrent users scanning close together
+// in time share upstream credits rather than each consuming their own —
+// that's what keeps one shared Twelve Data key viable across subscribers.
+// Still worth pacing client-side so a single scan doesn't fire 44 requests
+// at once against your own serverless function.
+export async function fetchBatch(symbols, fetchFn, delayMs = 300) {
   const results = {};
   for (const symbol of symbols) {
     try {
