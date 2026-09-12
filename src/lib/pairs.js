@@ -18,12 +18,19 @@ export const FOREX_PAIRS = [
   "USD/NOK", "USD/SEK", "USD/DKK", "USD/PLN", "USD/CZK", "USD/HUF",
 ];
 
-export const COMMODITY_PAIRS = [
-  "XAU/USD", // Gold
-  "XAG/USD", // Silver
+// Gold & silver: real, free, via Binance's regulated TradFi perpetuals
+// (XAUUSDT / XAGUSDT), launched Jan 2026. Same public API as crypto.
+export const BINANCE_COMMODITY_PAIRS = [
+  "XAUUSDT", // Gold
+  "XAGUSDT", // Silver
+];
+
+// Oil & copper: no free Binance equivalent found — still requires
+// Twelve Data's paid Basic+ plan via the /api/forex-candles proxy.
+export const TWELVEDATA_COMMODITY_PAIRS = [
   "WTI/USD", // Crude oil (WTI)
-  "BRENT/USD", // Crude oil (Brent) - availability depends on your data provider's plan
-  "XCU/USD", // Copper
+  "BRENT/USD", // Crude oil (Brent)
+  "HG1", // Copper
 ];
 
 // "Big 7" crypto, Binance symbol format (quoted in USDT)
@@ -39,6 +46,7 @@ export const CRYPTO_PAIRS = [
 
 export const ALL_PAIRS = [
   ...FOREX_PAIRS.map((s) => ({ symbol: s, market: "forex" })),
-  ...COMMODITY_PAIRS.map((s) => ({ symbol: s, market: "commodity" })),
+  ...TWELVEDATA_COMMODITY_PAIRS.map((s) => ({ symbol: s, market: "commodity-td" })),
+  ...BINANCE_COMMODITY_PAIRS.map((s) => ({ symbol: s, market: "commodity-binance" })),
   ...CRYPTO_PAIRS.map((s) => ({ symbol: s, market: "crypto" })),
 ];
