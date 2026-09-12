@@ -1,15 +1,12 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { ALL_PAIRS } from "../lib/pairs";
-import { fetchCryptoCandles, fetchTwelveDataCandles, fetchBatch } from "../lib/dataFeeds";
+import { fetchCryptoCandles, fetchForexCandles, fetchBatch } from "../lib/dataFeeds";
 import { analyzePair, rankTopPairs, getActiveKillZone } from "../lib/smcEngine";
 
 const TIMEFRAMES = ["5min", "15min", "1h"];
 
 export default function ScannerDashboard() {
   const [timeframe, setTimeframe] = useState("5min");
-  const [twelveDataKey, setTwelveDataKey] = useState(
-    () => localStorage.getItem("td_api_key") || ""
-  );
   const [results, setResults] = useState([]);
   const [status, setStatus] = useState("idle");
   const [lastRun, setLastRun] = useState(null);
@@ -21,16 +18,11 @@ export default function ScannerDashboard() {
   }, []);
 
   const runScan = useCallback(async () => {
-    if (!twelveDataKey) {
-      setStatus("error: add a Twelve Data API key to scan forex/commodities");
-      return;
-    }
     setStatus("scanning");
 
     const cryptoPairs = ALL_PAIRS.filter((p) => p.market === "crypto");
     const nonCrypto = ALL_PAIRS.filter((p) => p.market !== "crypto");
 
-    // Crypto: parallel, Binance has no strict key-based rate limit for this volume.
     const cryptoResults = await Promise.all(
       cryptoPairs.map(async (p) => {
         try {
@@ -42,14 +34,10 @@ export default function ScannerDashboard() {
       })
     );
 
-    // Forex/commodities: sequential + delayed to respect free-tier rate limits.
-    // NOTE: with 44 symbols on Twelve Data's free plan (8 req/min) a full
-    // sweep takes several minutes. Upgrade your plan or shrink the pair
-    // list if you need faster cycles.
-    setStatus("scanning forex/commodities (rate-limited, this takes a few minutes)");
+    setStatus("scanning forex/commodities");
     const fxRaw = await fetchBatch(
       nonCrypto.map((p) => p.symbol),
-      (symbol) => fetchTwelveDataCandles(symbol, timeframe, twelveDataKey)
+      (symbol) => fetchForexCandles(symbol, timeframe)
     );
     const fxResults = nonCrypto.map((p) => {
       const candles = fxRaw[p.symbol];
@@ -62,7 +50,7 @@ export default function ScannerDashboard() {
     setResults([...cryptoResults, ...fxResults]);
     setLastRun(new Date());
     setStatus("idle");
-  }, [timeframe, twelveDataKey]);
+  }, [timeframe]);
 
   const topThree = rankTopPairs(results, 3);
   const watchlist = results
@@ -89,20 +77,6 @@ export default function ScannerDashboard() {
               </option>
             ))}
           </select>
-        </label>
-
-        <label style={{ fontSize: 13, flex: 1, minWidth: 220 }}>
-          Twelve Data API key:{" "}
-          <input
-            type="password"
-            value={twelveDataKey}
-            onChange={(e) => {
-              setTwelveDataKey(e.target.value);
-              localStorage.setItem("td_api_key", e.target.value);
-            }}
-            placeholder="needed for forex/commodities"
-            style={{ width: "100%" }}
-          />
         </label>
 
         <button onClick={runScan} disabled={status.startsWith("scanning")}>
