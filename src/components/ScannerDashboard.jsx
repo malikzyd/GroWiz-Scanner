@@ -8,10 +8,10 @@ const TIMEFRAMES = ["5min", "15min", "1h"];
 // Theme tokens — change these in one place if you want to retune the palette.
 const COLORS = {
   bg: "#000000",
-  panel: "#0a0f0a",
-  border: "#1f2e1f",
+  panel: "#0a0a0a",
+  border: "#1a1a1a",
   text: "#ffffff",
-  dim: "#9ca3af",
+  dim: "rgba(255,255,255,0.65)",
   green: "#22c55e",
   red: "#ef4444",
   blue: "#3b82f6",
@@ -78,19 +78,16 @@ export default function ScannerDashboard() {
     >
       <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
         {/* Logo, centered */}
-        <div style={{ textAlign: "center", padding: "24px 0 8px" }}>
-          <div
+        <div style={{ textAlign: "center", padding: "32px 0 8px" }}>
+          <img
+            src="/logo.png"
+            alt="GroWiz Scanner"
             style={{
-              display: "inline-block",
-              fontSize: 32,
-              fontWeight: 800,
-              letterSpacing: 1,
+              width: 140,
+              height: "auto",
+              filter: "drop-shadow(0 0 18px rgba(34,197,94,0.35))",
             }}
-          >
-            <span style={{ color: COLORS.green }}>Gro</span>
-            <span style={{ color: COLORS.text }}>Wiz</span>
-          </div>
-          <div style={{ fontSize: 12, color: COLORS.dim, marginTop: 2 }}>SCANNER</div>
+          />
         </div>
 
         <header style={{ textAlign: "center", marginBottom: 20 }}>
