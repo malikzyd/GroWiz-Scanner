@@ -1,6 +1,11 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { ALL_PAIRS } from "../lib/pairs";
-import { fetchCryptoCandles, fetchForexCandles, fetchBatch } from "../lib/dataFeeds";
+import {
+  fetchCryptoCandles,
+  fetchBinanceCommodityCandles,
+  fetchForexCandles,
+  fetchBatch,
+} from "../lib/dataFeeds";
 import { analyzePair, rankTopPairs, getActiveKillZone } from "../lib/smcEngine";
 
 const TIMEFRAMES = ["5min", "15min", "1h"];
@@ -33,12 +38,17 @@ export default function ScannerDashboard() {
     setStatus("scanning");
 
     const cryptoPairs = ALL_PAIRS.filter((p) => p.market === "crypto");
-    const nonCrypto = ALL_PAIRS.filter((p) => p.market !== "crypto");
+    const binanceCommodities = ALL_PAIRS.filter((p) => p.market === "commodity-binance");
+    const proxyPairs = ALL_PAIRS.filter(
+      (p) => p.market === "forex" || p.market === "commodity-td"
+    );
 
-    const cryptoResults = await Promise.all(
-      cryptoPairs.map(async (p) => {
+    // Free, parallel: crypto + gold/silver, both from Binance directly.
+    const freeResults = await Promise.all(
+      [...cryptoPairs, ...binanceCommodities].map(async (p) => {
         try {
-          const candles = await fetchCryptoCandles(p.symbol, timeframe);
+          const fetchFn = p.market === "crypto" ? fetchCryptoCandles : fetchBinanceCommodityCandles;
+          const candles = await fetchFn(p.symbol, timeframe);
           return analyzePair({ symbol: p.symbol, market: p.market, candles, timeframe });
         } catch (err) {
           return { symbol: p.symbol, market: p.market, error: err.message };
@@ -46,20 +56,20 @@ export default function ScannerDashboard() {
       })
     );
 
-    setStatus("scanning forex/commodities");
-    const fxRaw = await fetchBatch(
-      nonCrypto.map((p) => p.symbol),
+    setStatus("scanning forex/oil/copper");
+    const proxyRaw = await fetchBatch(
+      proxyPairs.map((p) => p.symbol),
       (symbol) => fetchForexCandles(symbol, timeframe)
     );
-    const fxResults = nonCrypto.map((p) => {
-      const candles = fxRaw[p.symbol];
+    const proxyResults = proxyPairs.map((p) => {
+      const candles = proxyRaw[p.symbol];
       if (!candles || candles.error) {
         return { symbol: p.symbol, market: p.market, error: candles?.error || "fetch failed" };
       }
       return analyzePair({ symbol: p.symbol, market: p.market, candles, timeframe });
     });
 
-    setResults([...cryptoResults, ...fxResults]);
+    setResults([...freeResults, ...proxyResults]);
     setLastRun(new Date());
     setStatus("idle");
   }, [timeframe]);
@@ -80,7 +90,7 @@ export default function ScannerDashboard() {
         {/* Logo, centered */}
         <div style={{ textAlign: "center", padding: "32px 0 8px" }}>
           <img
-            src="/IMG-20260912-WA9285.jpg" 
+            src="/logo.png"
             alt="GroWiz Scanner"
             style={{
               width: 140,
