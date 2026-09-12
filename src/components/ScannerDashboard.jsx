@@ -80,7 +80,7 @@ export default function ScannerDashboard() {
         {/* Logo, centered */}
         <div style={{ textAlign: "center", padding: "32px 0 8px" }}>
           <img
-            src="/logo.png"
+            src="/IMG-20260912-WA9285.jpg" 
             alt="GroWiz Scanner"
             style={{
               width: 140,
