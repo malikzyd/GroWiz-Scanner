@@ -1,10 +1,14 @@
 // src/lib/smcEngine.js
 //
-// All detection here is standard, well-documented ICT/SMC technical analysis
-// run against real (or estimated, see dataFeeds.js) candle data pulled live
-// for each pair. Nothing here claims access to broker order books or
-// institutional flow — it's pattern detection on price/volume, same category
-// as every RSI or MACD indicator, just applied to SMC concepts instead.
+// Detection is standard, documented ICT/SMC technical analysis run against
+// real (or estimated — see dataFeeds.js) candle data. Nothing here claims
+// access to broker order books or institutional flow.
+//
+// NEW in this version: entries are only returned when the intraday signal
+// agrees with the pair's DAILY bias (real market structure — HH/HL vs
+// LH/LL) and doesn't conflict with DXY direction. When it doesn't align,
+// the pair still returns its support/resistance, order block, and FVG
+// levels — just with action: "wait" instead of a trade.
 
 // ---------- Swing points & liquidity (BRM / SRM) ----------
 
@@ -24,13 +28,8 @@ function findSwingPoints(candles, lookback = 3) {
   return { swingHighs, swingLows };
 }
 
-// BRM = "buy-side retail money" -> liquidity resting ABOVE recent swing highs
-//        (breakout buy-stops / retail longs' take-profits cluster here)
-// SRM = "sell-side retail money" -> liquidity resting BELOW recent swing lows
-//        (breakout sell-stops / retail shorts' take-profits cluster here)
-// Equal-highs/lows within `tolerancePct` are treated as one clustered pool
-// (bigger pools = more resting liquidity = more attractive sweep target).
 function findLiquidityPools(swingPoints, tolerancePct = 0.05) {
+  if (swingPoints.length === 0) return [];
   const pools = [];
   const sorted = [...swingPoints].sort((a, b) => a.price - b.price);
   let cluster = [sorted[0]];
@@ -48,10 +47,28 @@ function findLiquidityPools(swingPoints, tolerancePct = 0.05) {
   return pools
     .map((c) => ({
       price: c.reduce((s, p) => s + p.price, 0) / c.length,
-      strength: c.length, // how many swings clustered here = pool size
+      strength: c.length,
       lastTouch: Math.max(...c.map((p) => p.time)),
     }))
     .sort((a, b) => b.strength - a.strength);
+}
+
+// ---------- Liquidity sweep detection ----------
+// A recognized public ICT pattern: price briefly breaks a prior swing
+// high/low (sweeping resting liquidity/stops) then closes back inside the
+// prior range — often precedes a reversal in the swept direction's opposite.
+function detectLiquiditySweep(candles, swingHighs, swingLows) {
+  const last = candles[candles.length - 1];
+  const recentHigh = swingHighs.slice(-1)[0];
+  const recentLow = swingLows.slice(-1)[0];
+
+  if (recentHigh && last.high > recentHigh.price && last.close < recentHigh.price) {
+    return { type: "bearish", sweptLevel: recentHigh.price };
+  }
+  if (recentLow && last.low < recentLow.price && last.close > recentLow.price) {
+    return { type: "bullish", sweptLevel: recentLow.price };
+  }
+  return null;
 }
 
 // ---------- Fair Value Gaps ----------
@@ -71,7 +88,6 @@ function findFVGs(candles) {
   return fvgs;
 }
 
-// Drop FVGs price has already fully traded back through (i.e. "filled").
 function unfilledFVGs(fvgs, candles) {
   return fvgs.filter((fvg) => {
     const after = candles.slice(fvg.index + 1);
@@ -80,11 +96,6 @@ function unfilledFVGs(fvgs, candles) {
 }
 
 // ---------- Order blocks ----------
-// Simplified, common definition:
-// Bullish OB = last down-close candle before an impulsive up move that
-//              breaks above the prior swing high (structure break).
-// Bearish OB = last up-close candle before an impulsive down move that
-//              breaks below the prior swing low.
 
 function findOrderBlocks(candles, swingHighs, swingLows, impulseAtrMult = 1.5) {
   const obs = [];
@@ -96,20 +107,13 @@ function findOrderBlocks(candles, swingHighs, swingLows, impulseAtrMult = 1.5) {
     if (!isImpulse) continue;
 
     if (move > 0) {
-      // look back for the last down-close candle before this impulse
       for (let j = i; j >= Math.max(0, i - 5); j--) {
         if (candles[j].close < candles[j].open) {
           const brokeStructure = swingHighs.some(
             (sh) => sh.index < j && candles[i + 1].high > sh.price
           );
           if (brokeStructure) {
-            obs.push({
-              type: "bullish",
-              top: candles[j].high,
-              bottom: candles[j].low,
-              index: j,
-              time: candles[j].time,
-            });
+            obs.push({ type: "bullish", top: candles[j].high, bottom: candles[j].low, index: j, time: candles[j].time });
           }
           break;
         }
@@ -121,13 +125,7 @@ function findOrderBlocks(candles, swingHighs, swingLows, impulseAtrMult = 1.5) {
             (sl) => sl.index < j && candles[i + 1].low < sl.price
           );
           if (brokeStructure) {
-            obs.push({
-              type: "bearish",
-              top: candles[j].high,
-              bottom: candles[j].low,
-              index: j,
-              time: candles[j].time,
-            });
+            obs.push({ type: "bearish", top: candles[j].high, bottom: candles[j].low, index: j, time: candles[j].time });
           }
           break;
         }
@@ -150,15 +148,13 @@ function averageTrueRange(candles, period = 14) {
   for (let i = 1; i < candles.length; i++) {
     const c = candles[i];
     const prev = candles[i - 1];
-    trs.push(
-      Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close))
-    );
+    trs.push(Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close)));
   }
   const slice = trs.slice(-period);
   return slice.reduce((s, v) => s + v, 0) / (slice.length || 1);
 }
 
-// ---------- Kill zones (session windows, UTC) ----------
+// ---------- Kill zones ----------
 
 export function getActiveKillZone(date = new Date()) {
   const h = date.getUTCHours();
@@ -167,77 +163,6 @@ export function getActiveKillZone(date = new Date()) {
   if (h >= 12 && h < 15) return { name: "New York", active: true };
   if (h >= 10 && h < 12) return { name: "London/NY overlap approach", active: false };
   return { name: "Off-session", active: false };
-}
-
-// ---------- Master analysis per pair ----------
-
-export function analyzePair({ symbol, market, candles, timeframe }) {
-  if (!candles || candles.length < 30) {
-    return { symbol, market, error: "not enough candles" };
-  }
-
-  const { swingHighs, swingLows } = findSwingPoints(candles);
-  const brmPools = findLiquidityPools(swingHighs); // above price = buy-side resting liquidity
-  const srmPools = findLiquidityPools(swingLows); // below price = sell-side resting liquidity
-
-  const allFVGs = unfilledFVGs(findFVGs(candles), candles);
-  const allOBs = unmitigatedOBs(findOrderBlocks(candles, swingHighs, swingLows), candles);
-
-  const lastClose = candles[candles.length - 1].close;
-  const atr = averageTrueRange(candles);
-
-  const nearestFVG = nearestByPrice(allFVGs, lastClose, (f) => (f.top + f.bottom) / 2);
-  const nearestOB = nearestByPrice(allOBs, lastClose, (o) => (o.top + o.bottom) / 2);
-  const nearestBRM = nearestByPrice(brmPools, lastClose, (p) => p.price, "above");
-  const nearestSRM = nearestByPrice(srmPools, lastClose, (p) => p.price, "below");
-
-  // Recent volume/delta snapshot (real for crypto, estimated for fx/commodities)
-  const recent = candles.slice(-10);
-  const buySum = recent.reduce((s, c) => s + (c.buyVolume || 0), 0);
-  const sellSum = recent.reduce((s, c) => s + (c.sellVolume || 0), 0);
-  const volumeIsEstimated = recent.some((c) => c.volumeIsEstimated);
-
-  const bias = determineBias({ nearestOB, nearestFVG, buySum, sellSum });
-  const killZone = getActiveKillZone();
-
-  const { entry, sl, tp } = buildTradeLevels({
-    bias,
-    lastClose,
-    atr,
-    nearestOB,
-    nearestFVG,
-    nearestBRM,
-    nearestSRM,
-  });
-
-  const score = scorePair({
-    nearestOB,
-    nearestFVG,
-    lastClose,
-    atr,
-    killZoneActive: killZone.active,
-    poolStrength: Math.max(nearestBRM?.strength || 0, nearestSRM?.strength || 0),
-  });
-
-  return {
-    symbol,
-    market,
-    timeframe,
-    lastClose,
-    bias,
-    score,
-    killZone,
-    volumeIsEstimated,
-    buyVolume: buySum,
-    sellVolume: sellSum,
-    orderBlock: nearestOB ? { ...nearestOB, price: (nearestOB.top + nearestOB.bottom) / 2 } : null,
-    fvg: nearestFVG ? { ...nearestFVG, price: (nearestFVG.top + nearestFVG.bottom) / 2 } : null,
-    brm: nearestBRM,
-    srm: nearestSRM,
-    entry,
-    sl,
-    tp,
-  };
 }
 
 function nearestByPrice(items, refPrice, getPrice, side = "either") {
@@ -256,7 +181,7 @@ function nearestByPrice(items, refPrice, getPrice, side = "either") {
   return best;
 }
 
-function determineBias({ nearestOB, nearestFVG, buySum, sellSum }) {
+function determineIntradayBias({ nearestOB, nearestFVG, buySum, sellSum, sweep }) {
   let bullScore = 0;
   let bearScore = 0;
   if (nearestOB?.type === "bullish") bullScore++;
@@ -265,17 +190,16 @@ function determineBias({ nearestOB, nearestFVG, buySum, sellSum }) {
   if (nearestFVG?.type === "bearish") bearScore++;
   if (buySum > sellSum) bullScore++;
   else if (sellSum > buySum) bearScore++;
+  if (sweep?.type === "bullish") bullScore += 1.5;
+  if (sweep?.type === "bearish") bearScore += 1.5;
 
   if (bullScore === bearScore) return "neutral";
   return bullScore > bearScore ? "bullish" : "bearish";
 }
 
-function buildTradeLevels({ bias, lastClose, atr, nearestOB, nearestFVG, nearestBRM, nearestSRM }) {
-  if (bias === "neutral") return { entry: null, sl: null, tp: null };
-
+function buildTradeLevels({ bias, nearestOB, nearestFVG, nearestBRM, nearestSRM, atr }) {
   const zone = nearestOB || nearestFVG;
   if (!zone) return { entry: null, sl: null, tp: null };
-
   const zoneMid = (zone.top + zone.bottom) / 2;
 
   if (bias === "bullish") {
@@ -292,30 +216,122 @@ function buildTradeLevels({ bias, lastClose, atr, nearestOB, nearestFVG, nearest
   };
 }
 
-// Confluence score used to rank pairs and pick the top 3. Purely a function
-// of how many SMC factors line up + whether we're inside an active kill
-// zone — not a probability or a guarantee of any outcome.
-function scorePair({ nearestOB, nearestFVG, lastClose, atr, killZoneActive, poolStrength }) {
+function scorePair({ nearestOB, nearestFVG, lastClose, atr, killZoneActive, poolStrength, dailyAligned, dxyAlignment, sweep }) {
   let score = 0;
-  if (nearestOB) {
-    const dist = Math.abs((nearestOB.top + nearestOB.bottom) / 2 - lastClose);
-    score += Math.max(0, 3 - dist / atr); // closer OB = higher score, capped
-  }
-  if (nearestFVG) {
-    const dist = Math.abs((nearestFVG.top + nearestFVG.bottom) / 2 - lastClose);
-    score += Math.max(0, 2 - dist / atr);
-  }
-  if (nearestOB && nearestFVG && nearestOB.type === nearestFVG.type) {
-    score += 2; // OB + FVG agreeing on direction = confluence bonus
-  }
-  score += Math.min(poolStrength, 3) * 0.5; // bigger liquidity pool nearby
+  if (nearestOB) score += Math.max(0, 3 - Math.abs((nearestOB.top + nearestOB.bottom) / 2 - lastClose) / atr);
+  if (nearestFVG) score += Math.max(0, 2 - Math.abs((nearestFVG.top + nearestFVG.bottom) / 2 - lastClose) / atr);
+  if (nearestOB && nearestFVG && nearestOB.type === nearestFVG.type) score += 2;
+  score += Math.min(poolStrength, 3) * 0.5;
   if (killZoneActive) score += 1.5;
+  if (dailyAligned) score += 2.5; // daily bias confluence is weighted heavily on purpose
+  if (dxyAlignment === "aligned") score += 1.5;
+  if (dxyAlignment === "conflicting") score -= 2;
+  if (sweep) score += 1;
   return Math.round(score * 100) / 100;
+}
+
+// ---------- Master analysis per pair ----------
+//
+// dailyBias: { bias: "bullish"|"bearish"|"ranging"|"unknown", reason }
+// dxyAlignment: "aligned" | "conflicting" | "neutral"
+// keyLevels: { support, resistance } from the daily timeframe
+// highImpactNewsToday: boolean — a high-impact event today for this pair's currency
+export function analyzePair({ symbol, market, candles, timeframe, dailyBias, dxyAlignment, keyLevels, highImpactNewsToday }) {
+  if (!candles || candles.length < 30) {
+    return { symbol, market, error: "not enough candles" };
+  }
+
+  const { swingHighs, swingLows } = findSwingPoints(candles);
+  const brmPools = findLiquidityPools(swingHighs);
+  const srmPools = findLiquidityPools(swingLows);
+  const allFVGs = unfilledFVGs(findFVGs(candles), candles);
+  const allOBs = unmitigatedOBs(findOrderBlocks(candles, swingHighs, swingLows), candles);
+  const sweep = detectLiquiditySweep(candles, swingHighs, swingLows);
+
+  const lastClose = candles[candles.length - 1].close;
+  const atr = averageTrueRange(candles);
+
+  const nearestFVG = nearestByPrice(allFVGs, lastClose, (f) => (f.top + f.bottom) / 2);
+  const nearestOB = nearestByPrice(allOBs, lastClose, (o) => (o.top + o.bottom) / 2);
+  const nearestBRM = nearestByPrice(brmPools, lastClose, (p) => p.price, "above");
+  const nearestSRM = nearestByPrice(srmPools, lastClose, (p) => p.price, "below");
+
+  const recent = candles.slice(-10);
+  const buySum = recent.reduce((s, c) => s + (c.buyVolume || 0), 0);
+  const sellSum = recent.reduce((s, c) => s + (c.sellVolume || 0), 0);
+  const volumeIsEstimated = recent.some((c) => c.volumeIsEstimated);
+
+  const intradayBias = determineIntradayBias({ nearestOB, nearestFVG, buySum, sellSum, sweep });
+  const killZone = getActiveKillZone();
+
+  // --- Gating logic: only allow a trade if it agrees with daily bias and
+  // doesn't conflict with DXY. Otherwise: "wait", but still show levels.
+  const dBias = dailyBias?.bias || "unknown";
+  const dailyAligned = dBias !== "unknown" && dBias !== "ranging" && dBias === intradayBias;
+  const dxyBlocks = dxyAlignment === "conflicting";
+
+  let action = "wait";
+  let waitReason = null;
+  if (intradayBias === "neutral") {
+    waitReason = "no clear intraday signal";
+  } else if (dBias === "unknown" || dBias === "ranging") {
+    waitReason = `daily bias unclear (${dailyBias?.reason || "insufficient daily data"}) — showing levels only`;
+  } else if (!dailyAligned) {
+    waitReason = `intraday signal (${intradayBias}) is against daily bias (${dBias}) — waiting for alignment`;
+  } else if (dxyBlocks) {
+    waitReason = "conflicts with current DXY direction";
+  } else {
+    action = "entry";
+  }
+
+  const { entry, sl, tp } =
+    action === "entry"
+      ? buildTradeLevels({ bias: intradayBias, nearestOB, nearestFVG, nearestBRM, nearestSRM, atr })
+      : { entry: null, sl: null, tp: null };
+
+  const score = scorePair({
+    nearestOB,
+    nearestFVG,
+    lastClose,
+    atr,
+    killZoneActive: killZone.active,
+    poolStrength: Math.max(nearestBRM?.strength || 0, nearestSRM?.strength || 0),
+    dailyAligned,
+    dxyAlignment,
+    sweep,
+  });
+
+  return {
+    symbol,
+    market,
+    timeframe,
+    lastClose,
+    action, // "entry" | "wait"
+    waitReason,
+    intradayBias,
+    dailyBias: dBias,
+    dxyAlignment: dxyAlignment || "neutral",
+    highImpactNewsToday: !!highImpactNewsToday,
+    score,
+    killZone,
+    volumeIsEstimated,
+    buyVolume: buySum,
+    sellVolume: sellSum,
+    supportResistance: keyLevels || null,
+    orderBlock: nearestOB ? { ...nearestOB, price: (nearestOB.top + nearestOB.bottom) / 2 } : null,
+    fvg: nearestFVG ? { ...nearestFVG, price: (nearestFVG.top + nearestFVG.bottom) / 2 } : null,
+    brm: nearestBRM,
+    srm: nearestSRM,
+    liquiditySweep: sweep,
+    entry,
+    sl,
+    tp,
+  };
 }
 
 export function rankTopPairs(analyses, count = 3) {
   return analyses
-    .filter((a) => !a.error && a.bias !== "neutral")
+    .filter((a) => !a.error && a.action === "entry")
     .sort((a, b) => b.score - a.score)
     .slice(0, count);
 }
