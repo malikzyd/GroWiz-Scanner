@@ -11,6 +11,7 @@ const BINANCE_INTERVAL_MAP = {
   "5min": "5m",
   "15min": "15m",
   "1h": "1h",
+  "4h": "4h",
   "1day": "1d",
 };
 
