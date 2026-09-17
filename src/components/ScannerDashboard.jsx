@@ -1,17 +1,9 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useState } from "react";
 import { ALL_PAIRS } from "../lib/pairs";
-import {
-  fetchCryptoCandles,
-  fetchBinanceCommodityCandles,
-  fetchForexCandles,
-  fetchBatch,
-} from "../lib/dataFeeds";
-import { analyzePair, rankTopPairs, getActiveKillZone } from "../lib/smcEngine";
-import { getDailyBias, getKeyLevels } from "../lib/dailyBias";
-import { getDxyBias, getDxyAlignment } from "../lib/dxyEngine";
-import { getTodaysHighImpactCurrencies, pairTouchesHighImpactNews } from "../lib/fundamentals";
+import { fetchCryptoCandles, fetchBinanceCommodityCandles, fetchForexCandles } from "../lib/dataFeeds";
+import { analyzePairFull } from "../lib/analyzePairFull";
 
-const TIMEFRAMES = ["5min", "15min", "1h"];
+const ENTRY_TIMEFRAMES = ["5min", "15min"]; // per your spec — the only two choices
 
 const COLORS = {
   bg: "#000000",
@@ -25,103 +17,70 @@ const COLORS = {
   amber: "#f59e0b",
 };
 
-async function fetchDailyCandles(pair) {
-  if (pair.market === "crypto") return fetchCryptoCandles(pair.symbol, "1day", 60);
-  if (pair.market === "commodity-binance") return fetchBinanceCommodityCandles(pair.symbol, "1day", 60);
-  return fetchForexCandles(pair.symbol, "1day", 60);
+function fetchersFor(pair) {
+  if (pair.market === "crypto") {
+    return {
+      fetchDaily: (s) => fetchCryptoCandles(s, "1day", 90),
+      fetchFourHour: (s) => fetchCryptoCandles(s, "4h", 60),
+      fetchOneHour: (s) => fetchCryptoCandles(s, "1h", 100),
+      fetchEntry: (s, tf) => fetchCryptoCandles(s, tf, 150),
+    };
+  }
+  if (pair.market === "commodity-binance") {
+    return {
+      fetchDaily: (s) => fetchBinanceCommodityCandles(s, "1day", 90),
+      fetchFourHour: (s) => fetchBinanceCommodityCandles(s, "4h", 60),
+      fetchOneHour: (s) => fetchBinanceCommodityCandles(s, "1h", 100),
+      fetchEntry: (s, tf) => fetchBinanceCommodityCandles(s, tf, 150),
+    };
+  }
+  // forex + oil + copper -> Twelve Data proxy
+  return {
+    fetchDaily: (s) => fetchForexCandles(s, "1day", 90),
+    fetchFourHour: (s) => fetchForexCandles(s, "4h", 60),
+    fetchOneHour: (s) => fetchForexCandles(s, "1h", 100),
+    fetchEntry: (s, tf) => fetchForexCandles(s, tf, 150),
+  };
 }
 
 export default function ScannerDashboard() {
-  const [timeframe, setTimeframe] = useState("5min");
+  const [entryTimeframe, setEntryTimeframe] = useState("15min");
   const [results, setResults] = useState([]);
   const [status, setStatus] = useState("idle");
-  const [lastRun, setLastRun] = useState(null);
-  const [killZone, setKillZone] = useState(getActiveKillZone());
-  const [dxyBias, setDxyBias] = useState(null);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
 
-  useEffect(() => {
-    const t = setInterval(() => setKillZone(getActiveKillZone()), 60_000);
-    return () => clearInterval(t);
-  }, []);
+  const runScan = async () => {
+    setStatus("scanning");
+    setProgress({ done: 0, total: ALL_PAIRS.length });
+    const out = [];
 
-  const runScan = useCallback(async () => {
-    setStatus("checking DXY + news");
+    // Sequential with a light delay: this funnel already cuts calls a lot
+    // (most pairs stop at daily/4H), but staying paced avoids hammering
+    // the proxy/rate limits on a full 51-pair sweep.
+    for (const pair of ALL_PAIRS) {
+      const base = fetchersFor(pair);
+      const fetchEntry = (s) => base.fetchEntry(s, entryTimeframe);
+      try {
+        const result = await analyzePairFull({
+          symbol: pair.symbol,
+          market: pair.market,
+          entryTimeframe,
+          fetchers: { ...base, fetchEntry },
+        });
+        out.push(result);
+      } catch (err) {
+        out.push({ symbol: pair.symbol, market: pair.market, error: err.message });
+      }
+      setProgress((p) => ({ ...p, done: p.done + 1 }));
+      await new Promise((r) => setTimeout(r, 150));
+    }
 
-    const dxy = await getDxyBias(fetchForexCandles);
-    setDxyBias(dxy);
-    const highImpactCurrencies = await getTodaysHighImpactCurrencies();
-
-    const cryptoPairs = ALL_PAIRS.filter((p) => p.market === "crypto");
-    const binanceCommodities = ALL_PAIRS.filter((p) => p.market === "commodity-binance");
-    const proxyPairs = ALL_PAIRS.filter((p) => p.market === "forex" || p.market === "commodity-td");
-
-    setStatus("scanning free pairs (crypto + gold/silver)");
-    const freeResults = await Promise.all(
-      [...cryptoPairs, ...binanceCommodities].map(async (p) => {
-        try {
-          const fetchFn = p.market === "crypto" ? fetchCryptoCandles : fetchBinanceCommodityCandles;
-          const [candles, dailyCandles] = await Promise.all([
-            fetchFn(p.symbol, timeframe),
-            fetchDailyCandles(p),
-          ]);
-          const dailyBias = getDailyBias(dailyCandles);
-          const keyLevels = getKeyLevels(dailyCandles);
-          const dxyAlignment = getDxyAlignment(p.symbol, dailyBias.bias, dxy.bias);
-          return analyzePair({
-            symbol: p.symbol,
-            market: p.market,
-            candles,
-            timeframe,
-            dailyBias,
-            dxyAlignment,
-            keyLevels,
-            highImpactNewsToday: pairTouchesHighImpactNews(p.symbol, highImpactCurrencies),
-          });
-        } catch (err) {
-          return { symbol: p.symbol, market: p.market, error: err.message };
-        }
-      })
-    );
-
-    setStatus("scanning forex/oil/copper (paced)");
-    const proxyRaw = await fetchBatch(
-      proxyPairs.map((p) => p.symbol),
-      (symbol) => fetchForexCandles(symbol, timeframe)
-    );
-    const proxyResults = await Promise.all(
-      proxyPairs.map(async (p) => {
-        const candles = proxyRaw[p.symbol];
-        if (!candles || candles.error) {
-          return { symbol: p.symbol, market: p.market, error: candles?.error || "fetch failed" };
-        }
-        try {
-          const dailyCandles = await fetchDailyCandles(p);
-          const dailyBias = getDailyBias(dailyCandles);
-          const keyLevels = getKeyLevels(dailyCandles);
-          const dxyAlignment = getDxyAlignment(p.symbol, dailyBias.bias, dxy.bias);
-          return analyzePair({
-            symbol: p.symbol,
-            market: p.market,
-            candles,
-            timeframe,
-            dailyBias,
-            dxyAlignment,
-            keyLevels,
-            highImpactNewsToday: pairTouchesHighImpactNews(p.symbol, highImpactCurrencies),
-          });
-        } catch (err) {
-          return { symbol: p.symbol, market: p.market, error: err.message };
-        }
-      })
-    );
-
-    setResults([...freeResults, ...proxyResults]);
-    setLastRun(new Date());
+    setResults(out);
     setStatus("idle");
-  }, [timeframe]);
+  };
 
-  const topThree = rankTopPairs(results, 3);
-  const watchlist = results.filter((r) => !r.error).sort((a, b) => b.score - a.score);
+  const entries = results.filter((r) => !r.error && r.action === "entry").sort((a, b) => 0);
+  const watching = results.filter((r) => !r.error && r.action === "wait");
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", background: COLORS.bg, color: COLORS.text, minHeight: "100vh" }}>
@@ -133,93 +92,58 @@ export default function ScannerDashboard() {
         <header style={{ textAlign: "center", marginBottom: 20 }}>
           <h1 style={{ fontSize: 18, marginBottom: 6, color: COLORS.green }}>Live Scan</h1>
           <p style={{ fontSize: 13, color: COLORS.dim, maxWidth: 640, margin: "0 auto" }}>
-            All market's insights in one click. Run alongside TradingView — this is a read-only
-            overlay, not a broker or execution tool.
+            Daily bias -&gt; 4H direction -&gt; 1H levels -&gt; entry setup, top-down, {ALL_PAIRS.length} pairs.
           </p>
         </header>
 
         <section style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "center", flexWrap: "wrap", marginBottom: 16 }}>
           <label style={{ fontSize: 13 }}>
-            Timeframe:{" "}
-            <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)} style={{ background: COLORS.panel, color: COLORS.text, border: `1px solid ${COLORS.border}` }}>
-              {TIMEFRAMES.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
+            Entry timeframe:{" "}
+            <select value={entryTimeframe} onChange={(e) => setEntryTimeframe(e.target.value)} style={{ background: COLORS.panel, color: COLORS.text, border: `1px solid ${COLORS.border}` }}>
+              {ENTRY_TIMEFRAMES.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
             </select>
           </label>
           <button onClick={runScan} disabled={status !== "idle"} style={{ background: COLORS.green, color: "#000", fontWeight: 700, border: "none", borderRadius: 6, padding: "8px 16px", cursor: "pointer" }}>
-            {status !== "idle" ? status : "Run scan"}
+            {status !== "idle" ? `Scanning ${progress.done}/${progress.total}...` : "Run scan"}
           </button>
         </section>
 
-        <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginBottom: 16 }}>
-          <Badge label={`Session: ${killZone.name}${killZone.active ? " (active)" : ""}`} color={killZone.active ? COLORS.green : COLORS.dim} />
-          {dxyBias && <Badge label={`DXY: ${dxyBias.bias}`} color={dxyBias.bias === "bullish" ? COLORS.green : dxyBias.bias === "bearish" ? COLORS.red : COLORS.dim} />}
-          {lastRun && <Badge label={`Last scan ${lastRun.toLocaleTimeString()}`} color={COLORS.dim} />}
-        </div>
-
-        <h2 style={{ fontSize: 16, marginBottom: 8, color: COLORS.green }}>Top 3 to trade</h2>
+        <h2 style={{ fontSize: 16, marginBottom: 8, color: COLORS.green }}>Entries found</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 24 }}>
-          {topThree.length === 0 && <p style={{ fontSize: 13, color: COLORS.dim }}>No pairs currently aligned across intraday + daily bias + DXY. Check the watchlist below for levels to watch.</p>}
-          {topThree.map((r) => <PairCard key={r.symbol} r={r} highlighted />)}
+          {entries.length === 0 && <p style={{ fontSize: 13, color: COLORS.dim }}>No pairs currently have a qualifying entry. See below for pairs to watch.</p>}
+          {entries.map((r) => <PairCard key={r.symbol} r={r} highlighted />)}
         </div>
 
-        <h2 style={{ fontSize: 16, marginBottom: 8, color: COLORS.green }}>Full watchlist</h2>
+        <h2 style={{ fontSize: 16, marginBottom: 8, color: COLORS.green }}>Watching (no entry yet)</h2>
         <div style={{ display: "grid", gap: 8, marginBottom: 40 }}>
-          {watchlist.map((r) => <PairCard key={r.symbol} r={r} />)}
+          {watching.map((r) => <PairCard key={r.symbol} r={r} />)}
         </div>
-
-        <footer style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 20, paddingBottom: 32, textAlign: "center" }}>
-          <div style={{ fontSize: 13, marginBottom: 6 }}>
-            Contact us, email: <a href="mailto:ghostgrower88@gmail.com" style={{ color: COLORS.blue }}>ghostgrower88@gmail.com</a>
-          </div>
-          <div style={{ fontSize: 13, marginBottom: 16 }}>
-            <a href="https://growizanalytics.lovable.app" target="_blank" rel="noopener noreferrer" style={{ color: COLORS.blue }}>GroWiz Signal Generator</a>
-          </div>
-          <p style={{ fontSize: 11, color: COLORS.dim, maxWidth: 520, margin: "0 auto 10px" }}>
-            Scans live markets via SMC, retail money levels, order flow, and volume.
-          </p>
-          <p style={{ fontSize: 10, color: COLORS.dim, maxWidth: 520, margin: "0 auto" }}>
-            Scans the markets and gives you scanned analysis, not financial advice. Invest at your own risk.
-          </p>
-        </footer>
       </div>
     </div>
   );
 }
 
-function Badge({ label, color }) {
-  return (
-    <span style={{ fontSize: 12, padding: "4px 10px", borderRadius: 999, border: `1px solid ${COLORS.border}`, background: COLORS.panel, color }}>
-      {label}
-    </span>
-  );
-}
-
 function PairCard({ r, highlighted }) {
   const isEntry = r.action === "entry";
-  const dirColor = r.intradayBias === "bullish" ? COLORS.green : r.intradayBias === "bearish" ? COLORS.red : COLORS.dim;
+  const biasColor = r.dailyBias === "bullish" ? COLORS.green : r.dailyBias === "bearish" ? COLORS.red : COLORS.dim;
 
   return (
     <div style={{ border: highlighted ? `2px solid ${COLORS.green}` : `1px solid ${COLORS.border}`, background: COLORS.panel, borderRadius: 8, padding: 12, fontSize: 13, color: COLORS.text }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
         <strong>{r.symbol}</strong>
-        <span style={{ color: dirColor, textTransform: "capitalize", fontWeight: 700 }}>{r.intradayBias}</span>
+        {isEntry && <span style={{ color: COLORS.green, fontWeight: 700 }}>{r.setupName}</span>}
       </div>
 
-      <div style={{ marginBottom: 4 }}>
-        Daily bias: <span style={{ color: r.dailyBias === "bullish" ? COLORS.green : r.dailyBias === "bearish" ? COLORS.red : COLORS.dim }}>{r.dailyBias}</span>
-        {" · "}DXY: <span style={{ color: r.dxyAlignment === "aligned" ? COLORS.green : r.dxyAlignment === "conflicting" ? COLORS.red : COLORS.dim }}>{r.dxyAlignment}</span>
+      <div style={{ marginBottom: 4, color: biasColor }}>
+        {r.displayBias || `Daily bias: ${r.dailyBias || "unknown"}`}
       </div>
 
-      {r.highImpactNewsToday && (
-        <div style={{ color: COLORS.amber, marginBottom: 4 }}>⚠ High-impact news today for this currency</div>
-      )}
+      {!isEntry && <div style={{ color: COLORS.amber, marginBottom: 6 }}>Wait — {r.waitReason}</div>}
+      {isEntry && <div style={{ color: COLORS.dim, marginBottom: 6 }}>{r.setupReason}</div>}
 
-      {!isEntry && (
-        <div style={{ color: COLORS.amber, marginBottom: 6 }}>Wait — {r.waitReason}</div>
-      )}
-
-      <div>Score: {r.score}</div>
-      <div>Last: {r.lastClose?.toFixed(5)}</div>
+      {r.entryTimeframe && <div style={{ color: COLORS.dim }}>Entry TF: {r.entryTimeframe}</div>}
+      {r.marketMakerPhase && <div style={{ color: COLORS.dim }}>MM phase (1H): {r.marketMakerPhase}</div>}
+      {r.premiumDiscount && <div style={{ color: COLORS.dim }}>4H zone: {r.premiumDiscount}</div>}
 
       {r.supportResistance && (
         <div style={{ color: COLORS.dim }}>
@@ -229,27 +153,18 @@ function PairCard({ r, highlighted }) {
       )}
       {r.orderBlock && (
         <div style={{ color: r.orderBlock.type === "bullish" ? COLORS.green : COLORS.red }}>
-          OB ({r.orderBlock.type}) @ {r.orderBlock.price.toFixed(5)}
+          OB (1H, {r.orderBlock.type}) @ {r.orderBlock.price.toFixed(5)}
         </div>
       )}
       {r.fvg && (
         <div style={{ color: r.fvg.type === "bullish" ? COLORS.green : COLORS.red }}>
-          FVG ({r.fvg.type}) @ {r.fvg.price.toFixed(5)}
+          FVG (1H, {r.fvg.type}) @ {r.fvg.price.toFixed(5)}
         </div>
       )}
-      {r.liquiditySweep && (
-        <div style={{ color: COLORS.dim }}>Liquidity sweep ({r.liquiditySweep.type}) @ {r.liquiditySweep.sweptLevel.toFixed(5)}</div>
-      )}
-
-      <div style={{ color: COLORS.dim }}>
-        Vol: <span style={{ color: COLORS.green }}>buy {r.buyVolume?.toFixed(2)}</span> /{" "}
-        <span style={{ color: COLORS.red }}>sell {r.sellVolume?.toFixed(2)}</span>
-        {r.volumeIsEstimated && <span> (estimated)</span>}
-      </div>
 
       {isEntry && (
         <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${COLORS.border}`, color: COLORS.blue }}>
-          Entry {r.entry.toFixed(5)} · SL {r.sl.toFixed(5)} · TP {r.tp.toFixed(5)}
+          Entry {r.entry.toFixed(5)} · SL {r.sl.toFixed(5)} · TP {r.tp.toFixed(5)} · RR 1:{r.riskRewardRatio}
         </div>
       )}
     </div>
