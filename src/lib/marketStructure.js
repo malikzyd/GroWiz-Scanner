@@ -61,10 +61,12 @@ export function classifyStructure(candles, label = "structure") {
 
   const equilibrium = (lastSwingHigh + lastSwingLow) / 2;
   const premiumDiscount = lastClose > equilibrium ? "premium" : "discount";
+  const regime = state.includes("continuation") ? "trendy" : "sideways"; // sideways covers pullback/unclear too
 
   return {
     trend,
     state,
+    regime,
     reason: trend === "ranging" ? `mixed structure on ${label} — no clean bias` : `${trend} structure on ${label}`,
     swingHigh: lastSwingHigh,
     swingLow: lastSwingLow,
