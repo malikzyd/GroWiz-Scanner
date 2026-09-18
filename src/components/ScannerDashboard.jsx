@@ -69,6 +69,7 @@ export default function ScannerDashboard() {
 
   const entries = results.filter((r) => !r.error && r.action === "entry");
   const watching = results.filter((r) => !r.error && r.action === "wait");
+  const errored = results.filter((r) => r.error);
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", background: COLORS.bg, color: COLORS.text, minHeight: "100vh" }}>
@@ -111,18 +112,31 @@ export default function ScannerDashboard() {
         </div>
 
         <h2 style={{ fontSize: 16, marginBottom: 8, color: COLORS.green }}>Watching (no entry yet)</h2>
-        <div style={{ display: "grid", gap: 8, marginBottom: 40 }}>
+        <div style={{ display: "grid", gap: 8, marginBottom: 24 }}>
           {watching.map((r) => <PairCard key={r.symbol} r={r} />)}
         </div>
+
+        {errored.length > 0 && (
+          <>
+            <h2 style={{ fontSize: 16, marginBottom: 8, color: COLORS.red }}>Couldn't scan ({errored.length})</h2>
+            <div style={{ display: "grid", gap: 6, marginBottom: 40, fontSize: 12, color: COLORS.dim }}>
+              {errored.map((r) => (
+                <div key={r.symbol} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: 8 }}>
+                  <strong>{r.symbol}</strong>: {r.error}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         <footer style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 20, paddingBottom: 32, textAlign: "center" }}>
           <div style={{ fontSize: 13, marginBottom: 16 }}>
             <a href="https://growizanalytics.lovable.app" target="_blank" rel="noopener noreferrer" style={{ color: COLORS.blue }}>GroWiz Signal Generator</a>
           </div>
           <p style={{ fontSize: 11, color: COLORS.dim, maxWidth: 560, margin: "0 auto 12px", lineHeight: 1.5 }}>
-            This is not an AI tool — GroWiz runs purely on real-time market data, applying tested
-            ICT/SMC strategies and confirming alignment across market structure, order blocks, and
-            volume to derive a relatively accurate analysis. For safety purposes:
+            This is not an AI tool — GroWiz runs purely on current available market data, applying
+            all previously tested strategies, confirming all alignments with order flow and volume
+            differences from data sources to derive a relative analysis. For safety purposes below:
           </p>
           <p style={{ fontSize: 10, color: COLORS.amber, maxWidth: 520, margin: "0 auto 12px", fontWeight: 700 }}>
             DISCLAIMER: Always consider your risk. This is not financial advice.
