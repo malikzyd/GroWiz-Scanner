@@ -80,7 +80,7 @@ export default function ScannerDashboard() {
         <header style={{ textAlign: "center", marginBottom: 20 }}>
           <h1 style={{ fontSize: 18, marginBottom: 6, color: COLORS.green }}>Live Scan</h1>
           <p style={{ fontSize: 13, color: COLORS.dim, maxWidth: 640, margin: "0 auto" }}>
-            Scans Market Maker Models, Order flows, Volume diff and SRM/BRM, to generate accurate market analysis.
+            Analyze all markets in one go.
           </p>
         </header>
 
@@ -119,8 +119,13 @@ export default function ScannerDashboard() {
           <div style={{ fontSize: 13, marginBottom: 16 }}>
             <a href="https://growizanalytics.lovable.app" target="_blank" rel="noopener noreferrer" style={{ color: COLORS.blue }}>GroWiz Signal Generator</a>
           </div>
-          <p style={{ fontSize: 10, color: COLORS.dim, maxWidth: 520, margin: "0 auto 8px" }}>
-            Disclaimer, not financial advice.
+          <p style={{ fontSize: 11, color: COLORS.dim, maxWidth: 560, margin: "0 auto 12px", lineHeight: 1.5 }}>
+            This is not an AI tool — GroWiz runs purely on real-time market data, applying tested
+            ICT/SMC strategies and confirming alignment across market structure, order blocks, and
+            volume to derive a relatively accurate analysis. For safety purposes:
+          </p>
+          <p style={{ fontSize: 10, color: COLORS.amber, maxWidth: 520, margin: "0 auto 12px", fontWeight: 700 }}>
+            DISCLAIMER: Always consider your risk. This is not financial advice.
           </p>
           <p style={{ fontSize: 10, color: COLORS.dim, maxWidth: 520, margin: "0 auto" }}>
             Contact us = <a href="mailto:ghostgrower88@gmail.com" style={{ color: COLORS.blue }}>ghostgrower88@gmail.com</a>
