@@ -7,6 +7,8 @@
 // - Our /api/forex-candles proxy -> forex + oil + copper — needs the
 //   Twelve Data key held server-side, volume is estimated (no real feed)
 
+import { runPaced } from "./rateLimiter";
+
 const BINANCE_INTERVAL_MAP = {
   "5min": "5m",
   "15min": "15m",
@@ -53,38 +55,40 @@ export async function fetchBinanceCommodityCandles(symbol, timeframe = "5min", l
 }
 
 // Forex + oil + copper, via our own backend (holds the Twelve Data key).
+// Routed through runPaced so EVERY call to Twelve Data — across daily,
+// 1H, 15min, 5min, for every pair — is serialized at a safe rate. This
+// fixes the silent-failure bug where unpaced bursts got rejected.
 export async function fetchForexCandles(symbol, timeframe = "5min", limit = 100) {
-  const url = `/api/forex-candles?symbol=${encodeURIComponent(
-    symbol
-  )}&interval=${timeframe}&outputsize=${limit}`;
-  const res = await fetch(url);
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error || `forex-candles proxy failed for ${symbol}`);
+  return runPaced(async () => {
+    const url = `/api/forex-candles?symbol=${encodeURIComponent(
+      symbol
+    )}&interval=${timeframe}&outputsize=${limit}`;
+    const res = await fetch(url);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `forex-candles proxy failed for ${symbol}`);
 
-  const values = json.values || [];
-  return values
-    .slice()
-    .reverse()
-    .map((v) => {
-      const open = parseFloat(v.open);
-      const high = parseFloat(v.high);
-      const low = parseFloat(v.low);
-      const close = parseFloat(v.close);
-      const range = Math.max(high - low, 1e-9);
-      const buyPressure = (close - low) / range;
-      const sellPressure = (high - close) / range;
-      return {
-        time: new Date(v.datetime).getTime(),
-        open,
-        high,
-        low,
-        close,
-        volume: null,
-        buyVolume: buyPressure,
-        sellVolume: sellPressure,
-        volumeIsEstimated: true,
-      };
-    });
+    const values = json.values || [];
+    return values
+      .slice()
+      .reverse()
+      .map((v) => {
+        const open = parseFloat(v.open);
+        const high = parseFloat(v.high);
+        const low = parseFloat(v.low);
+        const close = parseFloat(v.close);
+        const range = Math.max(high - low, 1e-9);
+        const buyPressure = (close - low) / range;
+        const sellPressure = (high - close) / range;
+        return {
+          time: new Date(v.datetime).getTime(),
+          open, high, low, close,
+          volume: null,
+          buyVolume: buyPressure,
+          sellVolume: sellPressure,
+          volumeIsEstimated: true,
+        };
+      });
+  });
 }
 
 // Paces requests to the proxy (forex/oil/copper only — crypto and Binance
