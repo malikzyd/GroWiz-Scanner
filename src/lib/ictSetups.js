@@ -189,24 +189,46 @@ export function findEntrySetup(candles, bias) {
 }
 
 // Builds final entry/SL/TP from a matched setup candidate — SL kept a
-// little wider ("a lil safer" per your spec) and TP enforces a 1:1.5
-// minimum reward-to-risk.
-export function buildLevelsFromSetup(candidate, candles) {
+// little wider ("a lil safer" per your spec). TP sizing depends on daily
+// regime: sideways/pullback keeps trades short (1:1.5); trendy targets
+// 1:2 to 1:5, reaching toward the nearest opposing liquidity level when
+// available, otherwise defaulting to 1:3.
+export function buildLevelsFromSetup(candidate, candles, regime = "sideways", opposingLiquidity = null) {
   const atr = averageTrueRange(candles);
-  const slBuffer = atr * 0.35; // wider than a tight 0.25x ATR — "a lil safer"
+  const slBuffer = atr * 0.35;
 
   let sl, entry;
   entry = candidate.entry;
 
+  const isTrendy = regime === "trendy";
+
   if (candidate.direction === "bullish") {
     sl = (candidate.zoneBottom ?? entry - atr) - slBuffer;
     const risk = entry - sl;
-    const tp = entry + risk * 1.5; // enforced 1:1.5 minimum
-    return { entry, sl, tp, riskRewardRatio: 1.5 };
+    let rr = 1.5;
+    let tp = entry + risk * 1.5;
+    if (isTrendy) {
+      rr = 3;
+      if (opposingLiquidity && opposingLiquidity > entry) {
+        const impliedRR = (opposingLiquidity - entry) / risk;
+        rr = Math.min(5, Math.max(2, impliedRR));
+      }
+      tp = entry + risk * rr;
+    }
+    return { entry, sl, tp, riskRewardRatio: Math.round(rr * 100) / 100 };
   } else {
     sl = (candidate.zoneTop ?? entry + atr) + slBuffer;
     const risk = sl - entry;
-    const tp = entry - risk * 1.5;
-    return { entry, sl, tp, riskRewardRatio: 1.5 };
+    let rr = 1.5;
+    let tp = entry - risk * 1.5;
+    if (isTrendy) {
+      rr = 3;
+      if (opposingLiquidity && opposingLiquidity < entry) {
+        const impliedRR = (entry - opposingLiquidity) / risk;
+        rr = Math.min(5, Math.max(2, impliedRR));
+      }
+      tp = entry - risk * rr;
+    }
+    return { entry, sl, tp, riskRewardRatio: Math.round(rr * 100) / 100 };
   }
 }
