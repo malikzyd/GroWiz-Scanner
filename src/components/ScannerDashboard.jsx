@@ -3,8 +3,6 @@ import { ALL_PAIRS } from "../lib/pairs";
 import { fetchCryptoCandles, fetchBinanceCommodityCandles, fetchForexCandles } from "../lib/dataFeeds";
 import { analyzePairFull } from "../lib/analyzePairFull";
 
-const ENTRY_TIMEFRAMES = ["5min", "15min"]; // per your spec — the only two choices
-
 const COLORS = {
   bg: "#000000",
   panel: "#0a0a0a",
@@ -21,30 +19,28 @@ function fetchersFor(pair) {
   if (pair.market === "crypto") {
     return {
       fetchDaily: (s) => fetchCryptoCandles(s, "1day", 90),
-      fetchFourHour: (s) => fetchCryptoCandles(s, "4h", 60),
       fetchOneHour: (s) => fetchCryptoCandles(s, "1h", 100),
-      fetchEntry: (s, tf) => fetchCryptoCandles(s, tf, 150),
+      fetchFifteen: (s) => fetchCryptoCandles(s, "15min", 150),
+      fetchFive: (s) => fetchCryptoCandles(s, "5min", 150),
     };
   }
   if (pair.market === "commodity-binance") {
     return {
       fetchDaily: (s) => fetchBinanceCommodityCandles(s, "1day", 90),
-      fetchFourHour: (s) => fetchBinanceCommodityCandles(s, "4h", 60),
       fetchOneHour: (s) => fetchBinanceCommodityCandles(s, "1h", 100),
-      fetchEntry: (s, tf) => fetchBinanceCommodityCandles(s, tf, 150),
+      fetchFifteen: (s) => fetchBinanceCommodityCandles(s, "15min", 150),
+      fetchFive: (s) => fetchBinanceCommodityCandles(s, "5min", 150),
     };
   }
-  // forex + oil + copper -> Twelve Data proxy
   return {
     fetchDaily: (s) => fetchForexCandles(s, "1day", 90),
-    fetchFourHour: (s) => fetchForexCandles(s, "4h", 60),
     fetchOneHour: (s) => fetchForexCandles(s, "1h", 100),
-    fetchEntry: (s, tf) => fetchForexCandles(s, tf, 150),
+    fetchFifteen: (s) => fetchForexCandles(s, "15min", 150),
+    fetchFive: (s) => fetchForexCandles(s, "5min", 150),
   };
 }
 
 export default function ScannerDashboard() {
-  const [entryTimeframe, setEntryTimeframe] = useState("15min");
   const [results, setResults] = useState([]);
   const [status, setStatus] = useState("idle");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -54,19 +50,9 @@ export default function ScannerDashboard() {
     setProgress({ done: 0, total: ALL_PAIRS.length });
     const out = [];
 
-    // Sequential with a light delay: this funnel already cuts calls a lot
-    // (most pairs stop at daily/4H), but staying paced avoids hammering
-    // the proxy/rate limits on a full 51-pair sweep.
     for (const pair of ALL_PAIRS) {
-      const base = fetchersFor(pair);
-      const fetchEntry = (s) => base.fetchEntry(s, entryTimeframe);
       try {
-        const result = await analyzePairFull({
-          symbol: pair.symbol,
-          market: pair.market,
-          entryTimeframe,
-          fetchers: { ...base, fetchEntry },
-        });
+        const result = await analyzePairFull({ symbol: pair.symbol, market: pair.market, fetchers: fetchersFor(pair) });
         out.push(result);
       } catch (err) {
         out.push({ symbol: pair.symbol, market: pair.market, error: err.message });
@@ -79,7 +65,7 @@ export default function ScannerDashboard() {
     setStatus("idle");
   };
 
-  const entries = results.filter((r) => !r.error && r.action === "entry").sort((a, b) => 0);
+  const entries = results.filter((r) => !r.error && r.action === "entry");
   const watching = results.filter((r) => !r.error && r.action === "wait");
 
   return (
@@ -92,17 +78,11 @@ export default function ScannerDashboard() {
         <header style={{ textAlign: "center", marginBottom: 20 }}>
           <h1 style={{ fontSize: 18, marginBottom: 6, color: COLORS.green }}>Live Scan</h1>
           <p style={{ fontSize: 13, color: COLORS.dim, maxWidth: 640, margin: "0 auto" }}>
-            Daily bias -&gt; 4H direction -&gt; 1H levels -&gt; entry setup, top-down, {ALL_PAIRS.length} pairs.
+            Scans Market Maker Models, Order flows, Volume diff and SRM/BRM, to generate accurate market analysis.
           </p>
         </header>
 
-        <section style={{ display: "flex", gap: 12, alignItems: "center", justifyContent: "center", flexWrap: "wrap", marginBottom: 16 }}>
-          <label style={{ fontSize: 13 }}>
-            Entry timeframe:{" "}
-            <select value={entryTimeframe} onChange={(e) => setEntryTimeframe(e.target.value)} style={{ background: COLORS.panel, color: COLORS.text, border: `1px solid ${COLORS.border}` }}>
-              {ENTRY_TIMEFRAMES.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
-            </select>
-          </label>
+        <section style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
           <button onClick={runScan} disabled={status !== "idle"} style={{ background: COLORS.green, color: "#000", fontWeight: 700, border: "none", borderRadius: 6, padding: "8px 16px", cursor: "pointer" }}>
             {status !== "idle" ? `Scanning ${progress.done}/${progress.total}...` : "Run scan"}
           </button>
@@ -110,7 +90,7 @@ export default function ScannerDashboard() {
 
         <h2 style={{ fontSize: 16, marginBottom: 8, color: COLORS.green }}>Entries found</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 24 }}>
-          {entries.length === 0 && <p style={{ fontSize: 13, color: COLORS.dim }}>No pairs currently have a qualifying entry. See below for pairs to watch.</p>}
+          {entries.length === 0 && <p style={{ fontSize: 13, color: COLORS.dim }}>No pairs currently have a qualifying entry.</p>}
           {entries.map((r) => <PairCard key={r.symbol} r={r} highlighted />)}
         </div>
 
@@ -118,6 +98,18 @@ export default function ScannerDashboard() {
         <div style={{ display: "grid", gap: 8, marginBottom: 40 }}>
           {watching.map((r) => <PairCard key={r.symbol} r={r} />)}
         </div>
+
+        <footer style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 20, paddingBottom: 32, textAlign: "center" }}>
+          <div style={{ fontSize: 13, marginBottom: 16 }}>
+            <a href="https://growizanalytics.lovable.app" target="_blank" rel="noopener noreferrer" style={{ color: COLORS.blue }}>GroWiz Signal Generator</a>
+          </div>
+          <p style={{ fontSize: 10, color: COLORS.dim, maxWidth: 520, margin: "0 auto 8px" }}>
+            Disclaimer, not financial advice.
+          </p>
+          <p style={{ fontSize: 10, color: COLORS.dim, maxWidth: 520, margin: "0 auto" }}>
+            Contact us = <a href="mailto:ghostgrower88@gmail.com" style={{ color: COLORS.blue }}>ghostgrower88@gmail.com</a>
+          </p>
+        </footer>
       </div>
     </div>
   );
@@ -126,6 +118,7 @@ export default function ScannerDashboard() {
 function PairCard({ r, highlighted }) {
   const isEntry = r.action === "entry";
   const biasColor = r.dailyBias === "bullish" ? COLORS.green : r.dailyBias === "bearish" ? COLORS.red : COLORS.dim;
+  const intradayColor = r.intradayBias === "bullish" ? COLORS.green : r.intradayBias === "bearish" ? COLORS.red : COLORS.dim;
 
   return (
     <div style={{ border: highlighted ? `2px solid ${COLORS.green}` : `1px solid ${COLORS.border}`, background: COLORS.panel, borderRadius: 8, padding: 12, fontSize: 13, color: COLORS.text }}>
@@ -134,37 +127,26 @@ function PairCard({ r, highlighted }) {
         {isEntry && <span style={{ color: COLORS.green, fontWeight: 700 }}>{r.setupName}</span>}
       </div>
 
-      <div style={{ marginBottom: 4, color: biasColor }}>
-        {r.displayBias || `Daily bias: ${r.dailyBias || "unknown"}`}
-      </div>
+      <div>Dailybias = <span style={{ color: biasColor }}>{r.dailyBias || "unknown"}</span></div>
+      <div>Intraday = <span style={{ color: intradayColor }}>{r.intradayBias || "unknown"}</span></div>
+      {r.keyLevels && (
+        <div>Key S/R = <span style={{ color: COLORS.green }}>{r.keyLevels.support?.toFixed(5)}</span>, <span style={{ color: COLORS.red }}>{r.keyLevels.resistance?.toFixed(5)}</span></div>
+      )}
+      <div>Order blocks = {r.orderBlock ? <span style={{ color: r.orderBlock.type === "bullish" ? COLORS.green : COLORS.red }}>{r.orderBlock.price.toFixed(5)}</span> : "—"}</div>
+      <div>FVG = {r.fvg ? <span style={{ color: r.fvg.type === "bullish" ? COLORS.green : COLORS.red }}>{r.fvg.price.toFixed(5)}</span> : "—"}</div>
 
-      {!isEntry && <div style={{ color: COLORS.amber, marginBottom: 6 }}>Wait — {r.waitReason}</div>}
-      {isEntry && <div style={{ color: COLORS.dim, marginBottom: 6 }}>{r.setupReason}</div>}
-
-      {r.entryTimeframe && <div style={{ color: COLORS.dim }}>Entry TF: {r.entryTimeframe}</div>}
-      {r.marketMakerPhase && <div style={{ color: COLORS.dim }}>MM phase (1H): {r.marketMakerPhase}</div>}
-      {r.premiumDiscount && <div style={{ color: COLORS.dim }}>4H zone: {r.premiumDiscount}</div>}
-
-      {r.supportResistance && (
+      {r.killZone && <div style={{ color: COLORS.dim, marginTop: 4 }}>Session: {r.killZone.name}{r.killZone.active ? " (active)" : ""}</div>}
+      {r.sessionLiquidity && (
         <div style={{ color: COLORS.dim }}>
-          S/R: <span style={{ color: COLORS.green }}>{r.supportResistance.support?.toFixed(5)}</span> /{" "}
-          <span style={{ color: COLORS.red }}>{r.supportResistance.resistance?.toFixed(5)}</span>
+          Liquidity — sell-side: {r.sessionLiquidity.sellSideLiquidity?.toFixed(5) ?? "—"} / buy-side: {r.sessionLiquidity.buySideLiquidity?.toFixed(5) ?? "—"}
         </div>
       )}
-      {r.orderBlock && (
-        <div style={{ color: r.orderBlock.type === "bullish" ? COLORS.green : COLORS.red }}>
-          OB (1H, {r.orderBlock.type}) @ {r.orderBlock.price.toFixed(5)}
-        </div>
-      )}
-      {r.fvg && (
-        <div style={{ color: r.fvg.type === "bullish" ? COLORS.green : COLORS.red }}>
-          FVG (1H, {r.fvg.type}) @ {r.fvg.price.toFixed(5)}
-        </div>
-      )}
+
+      {!isEntry && <div style={{ color: COLORS.amber, marginTop: 4 }}>Wait — {r.waitReason}</div>}
 
       {isEntry && (
         <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${COLORS.border}`, color: COLORS.blue }}>
-          Entry {r.entry.toFixed(5)} · SL {r.sl.toFixed(5)} · TP {r.tp.toFixed(5)} · RR 1:{r.riskRewardRatio}
+          Entry = {r.entry.toFixed(5)} · SL {r.sl.toFixed(5)} · TP {r.tp.toFixed(5)} · RR 1:{r.riskRewardRatio}
         </div>
       )}
     </div>
