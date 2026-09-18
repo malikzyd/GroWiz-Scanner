@@ -154,10 +154,33 @@ function openingRangeGap(candles, bias) {
   return null;
 }
 
-// Runs all 6, returns the first candidate matching the confirmed bias
+// Judas Swing: a fakeout move at/near a session open that quickly
+// reverses back through the open price — commonly grouped with the other
+// session-timing setups above.
+function judasSwing(candles, bias) {
+  if (candles.length < 8) return null;
+  const sessionOpenIdx = candles.length - 8;
+  const sessionOpen = candles[sessionOpenIdx];
+  const last = lastCandle(candles);
+  const sinceOpen = candles.slice(sessionOpenIdx);
+  const openPrice = sessionOpen.open;
+
+  const fakeoutUp = Math.max(...sinceOpen.map((c) => c.high)) > openPrice * 1.0008;
+  const fakeoutDown = Math.min(...sinceOpen.map((c) => c.low)) < openPrice * 0.9992;
+
+  if (bias === "bullish" && fakeoutDown && last.close > openPrice) {
+    return { setup: "Judas Swing", direction: "bullish", entry: last.close, zoneBottom: Math.min(...sinceOpen.map((c) => c.low)), reason: "fakeout below session open reversed back above it" };
+  }
+  if (bias === "bearish" && fakeoutUp && last.close < openPrice) {
+    return { setup: "Judas Swing", direction: "bearish", entry: last.close, zoneTop: Math.max(...sinceOpen.map((c) => c.high)), reason: "fakeout above session open reversed back below it" };
+  }
+  return null;
+}
+
+// Runs all 7, returns the first candidate matching the confirmed bias
 // (order = rough priority; adjust if you want a different preference).
 export function findEntrySetup(candles, bias) {
-  const checks = [silverBullet, liquiditySweepMSS, turtleSoup, optimalTradeEntry, powerOfThree, openingRangeGap];
+  const checks = [silverBullet, liquiditySweepMSS, turtleSoup, optimalTradeEntry, powerOfThree, openingRangeGap, judasSwing];
   for (const check of checks) {
     const result = check(candles, bias);
     if (result) return result;
