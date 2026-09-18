@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { ALL_PAIRS } from "../lib/pairs";
 import { fetchCryptoCandles, fetchBinanceCommodityCandles, fetchForexCandles } from "../lib/dataFeeds";
 import { analyzePairFull } from "../lib/analyzePairFull";
+import NewsPanel from "./NewsPanel";
 
 const COLORS = {
   bg: "#000000",
@@ -44,6 +45,7 @@ export default function ScannerDashboard() {
   const [results, setResults] = useState([]);
   const [status, setStatus] = useState("idle");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [showNews, setShowNews] = useState(false);
 
   const runScan = async () => {
     setStatus("scanning");
@@ -82,11 +84,25 @@ export default function ScannerDashboard() {
           </p>
         </header>
 
-        <section style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+        <section style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 8 }}>
+          <a
+            href="https://growizanalytics.lovable.app"
+            style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, color: COLORS.blue, fontWeight: 700, borderRadius: 6, padding: "8px 14px", textDecoration: "none" }}
+          >
+            Signal
+          </a>
+          <button
+            onClick={() => setShowNews(true)}
+            style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, color: COLORS.amber, fontWeight: 700, borderRadius: 6, padding: "8px 14px", cursor: "pointer" }}
+          >
+            News
+          </button>
           <button onClick={runScan} disabled={status !== "idle"} style={{ background: COLORS.green, color: "#000", fontWeight: 700, border: "none", borderRadius: 6, padding: "8px 16px", cursor: "pointer" }}>
             {status !== "idle" ? `Scanning ${progress.done}/${progress.total}...` : "Run scan"}
           </button>
         </section>
+
+        {showNews && <NewsPanel onClose={() => setShowNews(false)} />}
 
         <h2 style={{ fontSize: 16, marginBottom: 8, color: COLORS.green }}>Entries found</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 24 }}>
