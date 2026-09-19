@@ -39,7 +39,10 @@ function parseBinanceKlines(raw) {
 
 export async function fetchCryptoCandles(symbol, timeframe = "5min", limit = 100) {
   const interval = BINANCE_INTERVAL_MAP[timeframe] || "5m";
-  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  // data-api.binance.vision is Binance's dedicated public-market-data
+  // endpoint — same data as api.binance.com, but meant specifically for
+  // this kind of read-only use and less prone to WAF-triggered 403s.
+  const url = `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Binance spot fetch failed for ${symbol}: ${res.status}`);
   return parseBinanceKlines(await res.json());
