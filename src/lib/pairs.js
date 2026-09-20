@@ -33,20 +33,22 @@ export const TWELVEDATA_COMMODITY_PAIRS = [
   "HG1", // Copper
 ];
 
-// "Big 7" crypto, Binance symbol format (quoted in USDT)
+// "Big 6" crypto, Binance symbol format (quoted in USDT)
 export const CRYPTO_PAIRS = [
   "BTCUSDT",
   "ETHUSDT",
   "SOLUSDT",
   "BNBUSDT",
   "XRPUSDT",
-  "ADAUSDT",
   "DOGEUSDT",
 ];
 
 export const ALL_PAIRS = [
+  // Fast pairs first (Binance, unpaced) — gives quick visible results
+  // while the paced Twelve Data pairs churn in the background.
+  ...CRYPTO_PAIRS.map((s) => ({ symbol: s, market: "crypto" })),
+  ...BINANCE_COMMODITY_PAIRS.map((s) => ({ symbol: s, market: "commodity-binance" })),
+  // Slower, rate-limited pairs last.
   ...FOREX_PAIRS.map((s) => ({ symbol: s, market: "forex" })),
   ...TWELVEDATA_COMMODITY_PAIRS.map((s) => ({ symbol: s, market: "commodity-td" })),
-  ...BINANCE_COMMODITY_PAIRS.map((s) => ({ symbol: s, market: "commodity-binance" })),
-  ...CRYPTO_PAIRS.map((s) => ({ symbol: s, market: "crypto" })),
 ];
