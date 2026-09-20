@@ -1,20 +1,43 @@
-// api/ff-calendar.js
-//
-// Forex Factory's own official free weekly calendar export — not a
-// scrape, this is their published export endpoint, widely used by
-// legitimate trading tools (MT4/MT5 indicators etc). Proxied here mainly
-// to avoid browser CORS issues and add light caching.
+// src/app/api/economic-calendar/route.js  (for App Router - RECOMMENDED)
+// If you use pages/ folder, use second version below
 
-export default async function handler(req, res) {
+export async function GET() {
   try {
-    const upstream = await fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json");
+    const upstream = await fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json", {
+      next: { revalidate: 900 }, // cache 15 min
+      headers: {
+        "User-Agent": "GroWiz/1.0",
+      },
+    });
+
     if (!upstream.ok) {
-      return res.status(502).json({ error: `Forex Factory feed returned ${upstream.status}` });
+      return Response.json({ error: `Forex Factory feed ${upstream.status}`, events: [] }, { status: 502 });
     }
+
     const data = await upstream.json();
-    res.setHeader("Cache-Control", "s-maxage=900, stale-while-revalidate=300");
-    return res.status(200).json(data);
+
+    // Normalize to what newsAnalysis.js expects
+    const normalized = (Array.isArray(data) ? data : []).map((e) => ({
+      time: e.date || e.time || "",
+      country: e.country || "US",
+      event: e.title || e.event || "",
+      actual: e.actual ?? null,
+      estimate: e.forecast ?? e.estimate ?? null,
+      prev: e.previous ?? null,
+      impact: e.impact || "Low", // High, Medium, Low
+    }));
+
+    return Response.json(
+      { economicCalendar: normalized, events: normalized },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=900, stale-while-revalidate=300",
+          "Access-Control-Allow-Origin": "*",
+        },
+      }
+    );
   } catch (err) {
-    return res.status(502).json({ error: err.message });
+    console.error("FF proxy error:", err);
+    return Response.json({ error: err.message, events: [], economicCalendar: [] }, { status: 502 });
   }
 }
