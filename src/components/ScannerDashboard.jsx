@@ -3,6 +3,7 @@ import { ALL_PAIRS } from "../lib/pairs";
 import { fetchCryptoCandles, fetchBinanceCommodityCandles, fetchForexCandles } from "../lib/dataFeeds";
 import { analyzePairFull } from "../lib/analyzePairFull";
 import NewsPanel from "./NewsPanel";
+import ScanningIndicator from "./ScanningIndicator";
 
 const COLORS = {
   bg: "#000000",
@@ -49,21 +50,21 @@ export default function ScannerDashboard() {
 
   const runScan = async () => {
     setStatus("scanning");
+    setResults([]);
     setProgress({ done: 0, total: ALL_PAIRS.length });
-    const out = [];
 
     for (const pair of ALL_PAIRS) {
+      let result;
       try {
-        const result = await analyzePairFull({ symbol: pair.symbol, market: pair.market, fetchers: fetchersFor(pair) });
-        out.push(result);
+        result = await analyzePairFull({ symbol: pair.symbol, market: pair.market, fetchers: fetchersFor(pair) });
       } catch (err) {
-        out.push({ symbol: pair.symbol, market: pair.market, error: err.message });
+        result = { symbol: pair.symbol, market: pair.market, error: err.message };
       }
+      setResults((prev) => [...prev, result]); // live update, not batched at the end
       setProgress((p) => ({ ...p, done: p.done + 1 }));
-      await new Promise((r) => setTimeout(r, 150));
+      await new Promise((r) => setTimeout(r, 50));
     }
 
-    setResults(out);
     setStatus("idle");
   };
 
@@ -104,6 +105,7 @@ export default function ScannerDashboard() {
         </section>
 
         {showNews && <NewsPanel onClose={() => setShowNews(false)} />}
+        {status !== "idle" && <ScanningIndicator />}
 
         <h2 style={{ fontSize: 16, marginBottom: 8, color: COLORS.green }}>Entries found</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 24 }}>
@@ -130,9 +132,6 @@ export default function ScannerDashboard() {
         )}
 
         <footer style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 20, paddingBottom: 32, textAlign: "center" }}>
-          <div style={{ fontSize: 13, marginBottom: 16 }}>
-            <a href="https://growizanalytics.lovable.app" target="_blank" rel="noopener noreferrer" style={{ color: COLORS.blue }}>GroWiz Signal Generator</a>
-          </div>
           <p style={{ fontSize: 11, color: COLORS.dim, maxWidth: 560, margin: "0 auto 12px", lineHeight: 1.5 }}>
             This is not an AI tool — GroWiz runs purely on current available market data, applying
             all previously tested strategies, confirming all alignments with order flow and volume
