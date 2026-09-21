@@ -4,6 +4,8 @@ import { fetchCryptoCandles, fetchBinanceCommodityCandles, fetchForexCandles } f
 import { analyzePairFull } from "../lib/analyzePairFull";
 import NewsPanel from "./NewsPanel";
 import ScanningIndicator from "./ScanningIndicator";
+import { getPlanConfig } from "../lib/plans";
+import { checkAndConsumeScan, filterPairsForPlan } from "../lib/scanGate";
 
 const COLORS = {
   bg: "#000000",
@@ -42,25 +44,36 @@ function fetchersFor(pair) {
   };
 }
 
-export default function ScannerDashboard() {
+export default function ScannerDashboard({ profile, userId, onSignOut }) {
+  const plan = getPlanConfig(profile?.plan);
   const [results, setResults] = useState([]);
   const [status, setStatus] = useState("idle");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [showNews, setShowNews] = useState(false);
+  const [gateMessage, setGateMessage] = useState("");
 
   const runScan = async () => {
+    setGateMessage("");
+    const gate = await checkAndConsumeScan(userId, profile);
+    if (!gate.allowed) {
+      setGateMessage(gate.reason);
+      return;
+    }
+
+    const pairsToScan = filterPairsForPlan(ALL_PAIRS, profile?.plan);
+
     setStatus("scanning");
     setResults([]);
-    setProgress({ done: 0, total: ALL_PAIRS.length });
+    setProgress({ done: 0, total: pairsToScan.length });
 
-    for (const pair of ALL_PAIRS) {
+    for (const pair of pairsToScan) {
       let result;
       try {
         result = await analyzePairFull({ symbol: pair.symbol, market: pair.market, fetchers: fetchersFor(pair) });
       } catch (err) {
         result = { symbol: pair.symbol, market: pair.market, error: err.message };
       }
-      setResults((prev) => [...prev, result]); // live update, not batched at the end
+      setResults((prev) => [...prev, result]);
       setProgress((p) => ({ ...p, done: p.done + 1 }));
       await new Promise((r) => setTimeout(r, 50));
     }
@@ -86,23 +99,45 @@ export default function ScannerDashboard() {
           </p>
         </header>
 
-        <section style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 8 }}>
-          <a
-            href="https://growizanalytics.lovable.app"
-            style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, color: COLORS.blue, fontWeight: 700, borderRadius: 6, padding: "8px 14px", textDecoration: "none" }}
-          >
-            Signal
-          </a>
-          <button
-            onClick={() => setShowNews(true)}
-            style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, color: COLORS.amber, fontWeight: 700, borderRadius: 6, padding: "8px 14px", cursor: "pointer" }}
-          >
-            News
-          </button>
+        <section style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8 }}>
+          {plan.signalPanelAccess ? (
+            <a
+              href="https://growizanalytics.lovable.app"
+              style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, color: COLORS.blue, fontWeight: 700, borderRadius: 6, padding: "8px 14px", textDecoration: "none" }}
+            >
+              Signal
+            </a>
+          ) : (
+            <button disabled style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, color: COLORS.dim, fontWeight: 700, borderRadius: 6, padding: "8px 14px", cursor: "not-allowed" }} title="Premium/Founding only">
+              Signal 🔒
+            </button>
+          )}
+
+          {plan.newsAccess ? (
+            <button
+              onClick={() => setShowNews(true)}
+              style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, color: COLORS.amber, fontWeight: 700, borderRadius: 6, padding: "8px 14px", cursor: "pointer" }}
+            >
+              News
+            </button>
+          ) : (
+            <button disabled style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, color: COLORS.dim, fontWeight: 700, borderRadius: 6, padding: "8px 14px", cursor: "not-allowed" }} title="Premium/Founding only">
+              News 🔒
+            </button>
+          )}
+
           <button onClick={runScan} disabled={status !== "idle"} style={{ background: COLORS.green, color: "#000", fontWeight: 700, border: "none", borderRadius: 6, padding: "8px 16px", cursor: "pointer" }}>
             {status !== "idle" ? `Scanning ${progress.done}/${progress.total}...` : "Run scan"}
           </button>
         </section>
+
+        <div style={{ textAlign: "center", marginBottom: 16 }}>
+          <span style={{ fontSize: 11, color: COLORS.dim }}>
+            Plan: <span style={{ color: COLORS.green }}>{plan.label}</span>
+            {plan.scansPerDay !== Infinity && ` · ${plan.scansPerDay} scans/day`}
+          </span>
+          {gateMessage && <div style={{ color: COLORS.red, fontSize: 12, marginTop: 4 }}>{gateMessage}</div>}
+        </div>
 
         {showNews && <NewsPanel onClose={() => setShowNews(false)} />}
         {status !== "idle" && <ScanningIndicator />}
