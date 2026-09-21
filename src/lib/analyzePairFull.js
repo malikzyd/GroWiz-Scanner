@@ -46,17 +46,12 @@ export async function analyzePairFull({ symbol, market, fetchers }) {
 
   // --- Step 2: 1H — used for equilibrium + session liquidity only, not a hard gate ---
   let equilibrium = daily.equilibrium;
-  const oneHCacheKey = `1h:${symbol}`;
-  let oneHCandles = getCached(oneHCacheKey, CACHE_TTL.oneHour);
+  let oneHCandles = null;
   try {
-    if (!oneHCandles) {
-      oneHCandles = await fetchers.fetchOneHour(symbol);
-      setCached(oneHCacheKey, oneHCandles);
-    }
+    oneHCandles = await fetchers.fetchOneHour(symbol);
     const oneH = classifyStructure(oneHCandles, "1H");
     if (oneH.equilibrium != null) equilibrium = oneH.equilibrium;
   } catch (err) {
-    oneHCandles = null;
     // 1H failed — proceed using the daily's own equilibrium instead of
     // failing the whole pair, so a single flaky fetch doesn't erase a pair.
   }
@@ -66,20 +61,16 @@ export async function analyzePairFull({ symbol, market, fetchers }) {
   const opposingLiquidity = bias === "bullish" ? sessionLiquidity.sellSideLiquidity : sessionLiquidity.buySideLiquidity;
 
   // --- Step 3: 15min — mark OBs/FVGs, filter to discount(long)/premium(short) ---
-  const fifteenCacheKey = `15min:${symbol}`;
-  let fifteenCandles = getCached(fifteenCacheKey, CACHE_TTL.fifteenMin);
-  if (!fifteenCandles) {
-    try {
-      fifteenCandles = await fetchers.fetchFifteen(symbol);
-      setCached(fifteenCacheKey, fifteenCandles);
-    } catch (err) {
-      return {
-        symbol, market, action: "wait",
-        waitReason: `15min fetch failed: ${err.message}`,
-        dailyBias: bias, intradayBias: regime,
-        keyLevels: getKeyLevels(dailyCandles), killZone, sessionLiquidity,
-      };
-    }
+  let fifteenCandles;
+  try {
+    fifteenCandles = await fetchers.fetchFifteen(symbol);
+  } catch (err) {
+    return {
+      symbol, market, action: "wait",
+      waitReason: `15min fetch failed: ${err.message}`,
+      dailyBias: bias, intradayBias: regime,
+      keyLevels: getKeyLevels(dailyCandles), killZone, sessionLiquidity,
+    };
   }
 
   const allObs = findOrderBlocks(fifteenCandles).filter((o) => o.type === bias);
@@ -134,7 +125,7 @@ export async function analyzePairFull({ symbol, market, fetchers }) {
     entry = zone.bottom;
     sl = entry - slBuffer;
     const risk = entry - sl;
-    rr = 1.5;
+    rr = 2; // minimum 1:2, always
     if (isTrendy) {
       rr = opposingLiquidity && opposingLiquidity > entry ? Math.min(5, Math.max(2, (opposingLiquidity - entry) / risk)) : 3;
     }
@@ -143,7 +134,7 @@ export async function analyzePairFull({ symbol, market, fetchers }) {
     entry = zone.top;
     sl = entry + slBuffer;
     const risk = sl - entry;
-    rr = 1.5;
+    rr = 2; // minimum 1:2, always
     if (isTrendy) {
       rr = opposingLiquidity && opposingLiquidity < entry ? Math.min(5, Math.max(2, (entry - opposingLiquidity) / risk)) : 3;
     }
