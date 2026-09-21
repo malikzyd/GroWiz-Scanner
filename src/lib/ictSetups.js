@@ -205,8 +205,8 @@ export function buildLevelsFromSetup(candidate, candles, regime = "sideways", op
   if (candidate.direction === "bullish") {
     sl = (candidate.zoneBottom ?? entry - atr) - slBuffer;
     const risk = entry - sl;
-    let rr = 1.5;
-    let tp = entry + risk * 1.5;
+    let rr = 2; // minimum 1:2, always
+    let tp = entry + risk * 2;
     if (isTrendy) {
       rr = 3;
       if (opposingLiquidity && opposingLiquidity > entry) {
@@ -219,8 +219,8 @@ export function buildLevelsFromSetup(candidate, candles, regime = "sideways", op
   } else {
     sl = (candidate.zoneTop ?? entry + atr) + slBuffer;
     const risk = sl - entry;
-    let rr = 1.5;
-    let tp = entry - risk * 1.5;
+    let rr = 2; // minimum 1:2, always
+    let tp = entry - risk * 2;
     if (isTrendy) {
       rr = 3;
       if (opposingLiquidity && opposingLiquidity < entry) {
