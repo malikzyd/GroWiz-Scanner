@@ -136,7 +136,15 @@ export default function ScannerDashboard({ profile, userId, onSignOut }) {
             Plan: <span style={{ color: COLORS.green }}>{plan.label}</span>
             {plan.scansPerDay !== Infinity && ` · ${plan.scansPerDay} scans/day`}
           </span>
-          {gateMessage && <div style={{ color: COLORS.red, fontSize: 12, marginTop: 4 }}>{gateMessage}</div>}
+          <div style={{ marginTop: 8 }}>
+            <a
+              href="/upgrade"
+              style={{ display: "inline-block", background: COLORS.green, color: "#000", fontWeight: 700, borderRadius: 6, padding: "6px 16px", textDecoration: "none", fontSize: 12 }}
+            >
+              Upgrade Plan
+            </a>
+          </div>
+          {gateMessage && <div style={{ color: COLORS.red, fontSize: 12, marginTop: 8 }}>{gateMessage}</div>}
         </div>
 
         {showNews && <NewsPanel onClose={() => setShowNews(false)} />}
