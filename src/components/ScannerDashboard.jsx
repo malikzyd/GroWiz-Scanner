@@ -1,11 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { ALL_PAIRS } from "../lib/pairs";
 import { fetchCryptoCandles, fetchBinanceCommodityCandles, fetchForexCandles } from "../lib/dataFeeds";
 import { analyzePairFull } from "../lib/analyzePairFull";
 import NewsPanel from "./NewsPanel";
 import ScanningIndicator from "./ScanningIndicator";
 import { getPlanConfig } from "../lib/plans";
-import { checkAndConsumeScan, filterPairsForPlan } from "../lib/scanGate";
+import { checkAndConsumeScan, filterPairsForPlan, getLiveScanStatus } from "../lib/scanGate";
 
 const COLORS = {
   bg: "#000000",
@@ -51,10 +51,20 @@ export default function ScannerDashboard({ profile, userId, onSignOut }) {
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [showNews, setShowNews] = useState(false);
   const [gateMessage, setGateMessage] = useState("");
+  const [scanStatus, setScanStatus] = useState({ used: 0, limit: plan.scansPerDay });
+
+  useEffect(() => {
+    if (userId) {
+      getLiveScanStatus(userId, profile?.plan).then((s) => setScanStatus({ used: s.used, limit: s.limit }));
+    }
+  }, [userId, profile?.plan]);
+
+  const atLimit = scanStatus.limit !== Infinity && scanStatus.used >= scanStatus.limit;
 
   const runScan = async () => {
     setGateMessage("");
-    const gate = await checkAndConsumeScan(userId, profile);
+    const gate = await checkAndConsumeScan(userId, profile?.plan);
+    setScanStatus({ used: gate.used, limit: gate.limit });
     if (!gate.allowed) {
       setGateMessage(gate.reason);
       return;
@@ -126,10 +136,46 @@ export default function ScannerDashboard({ profile, userId, onSignOut }) {
             </button>
           )}
 
-          <button onClick={runScan} disabled={status !== "idle"} style={{ background: COLORS.green, color: "#000", fontWeight: 700, border: "none", borderRadius: 6, padding: "8px 16px", cursor: "pointer" }}>
-            {status !== "idle" ? `Scanning ${progress.done}/${progress.total}...` : "Run scan"}
-          </button>
+          {atLimit ? (
+            <a
+              href="/upgrade"
+              style={{ background: COLORS.green, color: "#000", fontWeight: 700, borderRadius: 6, padding: "8px 16px", textDecoration: "none" }}
+            >
+              Upgrade Now
+            </a>
+          ) : (
+            <button onClick={runScan} disabled={status !== "idle"} style={{ background: COLORS.green, color: "#000", fontWeight: 700, border: "none", borderRadius: 6, padding: "8px 16px", cursor: "pointer" }}>
+              {status !== "idle" ? `Scanning ${progress.done}/${progress.total}...` : "Run scan"}
+            </button>
+          )}
         </section>
+
+        {scanStatus.limit !== Infinity && (
+          <div style={{ textAlign: "center", fontSize: 12, color: atLimit ? COLORS.red : COLORS.dim, marginBottom: 8 }}>
+            {scanStatus.used}/{scanStatus.limit} scans used today
+          </div>
+        )}
+
+        {atLimit && (
+          <div style={{ textAlign: "center", marginBottom: 16 }}>
+            <a
+              href="/upgrade"
+              style={{
+                display: "inline-block",
+                background: COLORS.green,
+                color: "#000",
+                fontWeight: 800,
+                borderRadius: 8,
+                padding: "14px 32px",
+                textDecoration: "none",
+                fontSize: 16,
+                boxShadow: "0 0 20px rgba(34,197,94,0.4)",
+              }}
+            >
+              Daily limit reached — Upgrade your Plan
+            </a>
+          </div>
+        )}
 
         <div style={{ textAlign: "center", marginBottom: 16 }}>
           <a
@@ -202,8 +248,22 @@ function PairCard({ r, highlighted }) {
     <div style={{ border: highlighted ? `2px solid ${COLORS.green}` : `1px solid ${COLORS.border}`, background: COLORS.panel, borderRadius: 8, padding: 12, fontSize: 13, color: COLORS.text }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
         <strong>{r.symbol}</strong>
-        {isEntry && <span style={{ color: COLORS.green, fontWeight: 700 }}>{r.setupName}</span>}
+        {isEntry && (
+          <span
+            style={{
+              color: "#000",
+              background: r.direction === "BUY" ? COLORS.green : COLORS.red,
+              fontWeight: 800,
+              fontSize: 12,
+              borderRadius: 4,
+              padding: "2px 8px",
+            }}
+          >
+            {r.direction || (r.dailyBias === "bullish" ? "BUY" : "SELL")}
+          </span>
+        )}
       </div>
+      {isEntry && <div style={{ color: COLORS.dim, fontSize: 11, marginBottom: 4 }}>{r.setupName}</div>}
 
       <div>Dailybias = <span style={{ color: biasColor }}>{r.dailyBias || "unknown"}</span></div>
       <div>Intraday = <span style={{ color: intradayColor }}>{r.intradayBias || "unknown"}</span></div>
