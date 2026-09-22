@@ -105,18 +105,26 @@ export async function analyzePairFull({ symbol, market, fetchers }) {
   }
 
   const candidate = findEntrySetup(fiveCandles, bias);
+  const currentPrice = fiveCandles[fiveCandles.length - 1].close;
+  const fifteenAtr = averageTrueRange(fifteenCandles);
+  const MAX_DRIFT = fifteenAtr * 2; // how far price may have moved from the entry since the zone/setup formed
 
   if (candidate) {
     const levels = buildLevelsFromSetup(candidate, fiveCandles, regime, opposingLiquidity);
+    const drift = Math.abs(levels.entry - currentPrice);
+    if (drift > MAX_DRIFT) {
+      return { ...baseResult, action: "wait", waitReason: `${candidate.setup} found but price has since moved away from the entry level (${drift.toFixed(5)} away) — invalidated` };
+    }
     return {
       ...baseResult, action: "entry",
+      direction: bias === "bullish" ? "BUY" : "SELL",
       setupName: candidate.setup, setupReason: candidate.reason,
       entry: levels.entry, sl: levels.sl, tp: levels.tp, riskRewardRatio: levels.riskRewardRatio,
     };
   }
 
   const zone = nearestOb || nearestFvg;
-  const atr = averageTrueRange(fiveCandles);
+  const atr = averageTrueRange(fifteenCandles); // matches the zone's own timeframe scale
   const slBuffer = atr * 0.35;
   const isTrendy = regime === "trendy";
 
@@ -141,8 +149,14 @@ export async function analyzePairFull({ symbol, market, fetchers }) {
     tp = entry - risk * rr;
   }
 
+  const drift = Math.abs(entry - currentPrice);
+  if (drift > MAX_DRIFT) {
+    return { ...baseResult, action: "wait", waitReason: `${nearestOb ? "order block" : "FVG"} found but price has since moved away from it (${drift.toFixed(5)} away) — no longer a valid entry` };
+  }
+
   return {
     ...baseResult, action: "entry",
+    direction: bias === "bullish" ? "BUY" : "SELL",
     setupName: nearestOb ? "Order Block entry" : "FVG entry",
     setupReason: `no named setup fired — entered at the ${bias === "bullish" ? "lowest" : "highest"} level of the ${nearestOb ? "order block" : "FVG"} (${regime} regime)`,
     entry, sl, tp, riskRewardRatio: Math.round(rr * 100) / 100,
