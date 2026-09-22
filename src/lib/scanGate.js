@@ -19,7 +19,7 @@ export async function checkAndConsumeScan(userId, profile) {
   const currentCount = isNewDay ? 0 : profile?.scans_used_today || 0;
 
   if (currentCount >= plan.scansPerDay) {
-    return { allowed: false, reason: `Free plan limit reached (${plan.scansPerDay} scans/day). Upgrade for unlimited scans.`, scansRemaining: 0 };
+    return { allowed: false, reason: `You've used all ${plan.scansPerDay} free scans today. Upgrade your plan for unlimited scans.`, scansRemaining: 0 };
   }
 
   const newCount = currentCount + 1;
