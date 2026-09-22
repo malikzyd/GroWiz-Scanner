@@ -6,35 +6,52 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
-// Checks whether this user can run a scan right now, and if so, records
-// the usage. Returns { allowed, reason, scansRemaining }.
-export async function checkAndConsumeScan(userId, profile) {
-  const plan = getPlanConfig(profile?.plan);
-  if (plan.scansPerDay === Infinity) {
-    return { allowed: true, scansRemaining: Infinity };
-  }
+// Always reads the LIVE count from the DB first — never trusts a
+// possibly-stale profile object passed in from a page load that happened
+// before earlier scans were consumed. This is what fixes the "limit never
+// triggers" bug: the old version only ever checked the profile snapshot
+// from page-load, which never updated after a scan.
+export async function getLiveScanStatus(userId, planKey) {
+  const plan = getPlanConfig(planKey);
+  if (plan.scansPerDay === Infinity) return { used: 0, limit: Infinity, plan };
+
+  const { data } = await supabase
+    .from("subscribers")
+    .select("scans_used_today, scan_count_date")
+    .eq("id", userId)
+    .single();
 
   const today = todayStr();
-  const isNewDay = profile?.scan_count_date !== today;
-  const currentCount = isNewDay ? 0 : profile?.scans_used_today || 0;
+  const used = data?.scan_count_date === today ? data?.scans_used_today || 0 : 0;
+  return { used, limit: plan.scansPerDay, plan };
+}
 
-  if (currentCount >= plan.scansPerDay) {
-    return { allowed: false, reason: `You've used all ${plan.scansPerDay} free scans today. Upgrade your plan for unlimited scans.`, scansRemaining: 0 };
+// Checks the live count, blocks if at/over limit, otherwise increments
+// and returns the new count so the UI can update immediately.
+export async function checkAndConsumeScan(userId, planKey) {
+  const status = await getLiveScanStatus(userId, planKey);
+  if (status.limit === Infinity) return { allowed: true, used: 0, limit: Infinity };
+
+  if (status.used >= status.limit) {
+    return {
+      allowed: false,
+      reason: `You've used all ${status.limit} free scans today. Upgrade your plan for unlimited scans.`,
+      used: status.used,
+      limit: status.limit,
+    };
   }
 
-  const newCount = currentCount + 1;
+  const newCount = status.used + 1;
   const { error } = await supabase
     .from("subscribers")
-    .update({ scans_used_today: newCount, scan_count_date: today })
+    .update({ scans_used_today: newCount, scan_count_date: todayStr() })
     .eq("id", userId);
 
   if (error) {
-    // Fail open on the write — don't block a scan just because the
-    // counter update failed, but log for your own visibility.
     console.error("scan counter update failed:", error.message);
   }
 
-  return { allowed: true, scansRemaining: plan.scansPerDay - newCount };
+  return { allowed: true, used: newCount, limit: status.limit };
 }
 
 // Filters the full pair list down to what this plan allows.
