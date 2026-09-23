@@ -17,7 +17,7 @@ const FOUNDING_MEMBER_CAP = 15;
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
-  const { password, verificationId, action } = req.body || {};
+  const { password, verificationId, action, overridePlan } = req.body || {};
   if (password !== process.env.ADMIN_PASSWORD) {
     return res.status(401).json({ error: "wrong password" });
   }
@@ -43,8 +43,12 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, status: "rejected" });
   }
 
-  // action === "verify"
-  if (record.plan === "founding") {
+  // action === "verify" — the admin's dropdown selection is the final
+  // authority on which plan gets granted, falling back to whatever the
+  // user originally submitted if none was sent.
+  const grantedPlan = overridePlan || record.plan;
+
+  if (grantedPlan === "founding") {
     const { count, error: countErr } = await supabaseAdmin
       .from("subscribers")
       .select("*", { count: "exact", head: true })
@@ -57,9 +61,9 @@ export default async function handler(req, res) {
     }
   }
 
-  const durationDays = PLAN_DURATIONS_DAYS[record.plan];
+  const durationDays = PLAN_DURATIONS_DAYS[grantedPlan];
   const expiresAt = durationDays == null ? null : new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
-  const planKey = record.plan === "founding" ? "premium" : record.plan; // founding members get premium-level access, tracked separately via payment_method
+  const planKey = grantedPlan === "founding" ? "premium" : grantedPlan; // founding members get premium-level access, tracked separately via payment_method
 
   const { error: subErr } = await supabaseAdmin
     .from("subscribers")
@@ -67,7 +71,7 @@ export default async function handler(req, res) {
       plan: planKey,
       plan_status: "active",
       plan_expires_at: expiresAt,
-      payment_method: record.plan === "founding" ? "binance-founding" : "binance",
+      payment_method: grantedPlan === "founding" ? "binance-founding" : "binance",
     })
     .eq("email", record.email);
 
