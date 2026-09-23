@@ -11,6 +11,12 @@ const COLORS = {
   amber: "#f59e0b",
 };
 
+const PLAN_CHOICES = [
+  { key: "pro", label: "Pro — 30 days" },
+  { key: "premium", label: "Premium — 30 days" },
+  { key: "founding", label: "Founding Member — lifetime" },
+];
+
 export default function AdminPage() {
   const [password, setPassword] = useState("");
   const [unlocked, setUnlocked] = useState(false);
@@ -18,6 +24,7 @@ export default function AdminPage() {
   const [proUsers, setProUsers] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [selectedPlans, setSelectedPlans] = useState({}); // { [verificationId]: planKey }
 
   const load = async (pw) => {
     setLoading(true);
@@ -32,6 +39,13 @@ export default function AdminPage() {
       if (!res.ok) throw new Error(json.error || "failed to load");
       setPending(json.pending || []);
       setProUsers(json.proUsers || []);
+      setSelectedPlans((prev) => {
+        const next = { ...prev };
+        (json.pending || []).forEach((p) => {
+          if (!next[p.id]) next[p.id] = p.plan;
+        });
+        return next;
+      });
       setUnlocked(true);
     } catch (err) {
       setError(err.message);
@@ -45,7 +59,7 @@ export default function AdminPage() {
       const res = await fetch("/api/admin/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password, verificationId, action }),
+        body: JSON.stringify({ password, verificationId, action, overridePlan: selectedPlans[verificationId] }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "action failed");
@@ -92,7 +106,7 @@ export default function AdminPage() {
         <div style={{ display: "grid", gap: 8, marginBottom: 28 }}>
           {pending.map((p) => (
             <div key={p.id} style={{ background: COLORS.panel, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: 12, fontSize: 13 }}>
-              <div><strong>{p.email}</strong> — {p.plan}</div>
+              <div><strong>{p.email}</strong> — submitted: {p.plan}</div>
               <div style={{ color: COLORS.dim }}>TRX: {p.trx_number}</div>
               <div style={{ color: COLORS.dim }}>{new Date(p.created_at).toLocaleString()}</div>
               {p.screenshot_url && (
@@ -100,6 +114,18 @@ export default function AdminPage() {
                   View screenshot
                 </a>
               )}
+              <label style={{ display: "block", fontSize: 12, color: COLORS.dim, marginTop: 8 }}>
+                Grant plan:
+                <select
+                  value={selectedPlans[p.id] || p.plan}
+                  onChange={(e) => setSelectedPlans((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                  style={{ display: "block", width: "100%", marginTop: 4, background: "#000", color: COLORS.text, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "6px 8px" }}
+                >
+                  {PLAN_CHOICES.map((opt) => (
+                    <option key={opt.key} value={opt.key}>{opt.label}</option>
+                  ))}
+                </select>
+              </label>
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                 <button onClick={() => act(p.id, "verify")} style={{ background: COLORS.green, color: "#000", border: "none", borderRadius: 6, padding: "6px 12px", cursor: "pointer" }}>
                   Verify
